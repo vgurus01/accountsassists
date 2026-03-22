@@ -145,7 +145,7 @@ export default function BookingSection() {
             Booking
           </div>
           <h2 className="mt-3 text-3xl leading-tight md:text-4xl">
-            Book an appointment (Mon–Fri, 9am–5pm).
+            Book an appointment (Mon–Fri, 9am–9pm).
           </h2>
           <p className="mt-4 text-sm leading-7 text-muted md:text-base">
             Choose a date, pick a time slot, and tell us what you need. If you
