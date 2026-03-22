@@ -16,7 +16,7 @@ export function startOfDay(date: Date) {
 
 export function getDefaultSlots() {
   const hours = [];
-  for (let h = 9; h <= 17; h += 1) {
+  for (let h = 9; h <= 21; h += 1) {
     hours.push(`${`${h}`.padStart(2, "0")}:00`);
   }
   return hours;
