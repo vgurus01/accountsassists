@@ -3,7 +3,12 @@
 import { useMemo, useState } from "react";
 import { getApiBase } from "../lib/api";
 import { SERVICES, type ServiceId } from "../lib/services";
-import { formatISODate, getDefaultSlots, isWeekday, startOfDay } from "../lib/time";
+import {
+  formatISODate,
+  getDefaultSlots,
+  isBookableDay,
+  startOfDay,
+} from "../lib/time";
 
 export default function ContactSection() {
   const apiBase = getApiBase();
@@ -64,7 +69,7 @@ export default function ContactSection() {
     const parts = callbackDate.split("-").map((p) => Number(p));
     if (parts.length !== 3) return false;
     const d = new Date(parts[0]!, (parts[1] ?? 1) - 1, parts[2]!);
-    return isWeekday(d) && startOfDay(d) >= today;
+    return isBookableDay(d) && startOfDay(d) >= today;
   }, [callbackDate, today]);
 
   return (
@@ -221,7 +226,7 @@ export default function ContactSection() {
                       />
                       {!callbackDateOk ? (
                         <div className="text-xs text-muted">
-                          Weekdays only, from today onwards.
+                          Any day from today onwards.
                         </div>
                       ) : null}
                     </label>

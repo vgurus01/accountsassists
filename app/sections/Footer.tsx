@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Footer() {
   const whatsappNumber = "447845420967";
   const whatsappDisplay = "+44 7845 420967";
@@ -27,7 +29,10 @@ export default function Footer() {
           </div>
           <div className="space-y-1 text-sm text-muted">
             <div>
-              <a href={`tel:+${whatsappNumber}`} className="hover:text-foreground">
+              <a
+                href={`tel:+${whatsappNumber}`}
+                className="hover:text-foreground"
+              >
                 {whatsappDisplay}
               </a>
             </div>
@@ -57,15 +62,18 @@ export default function Footer() {
             Links
           </div>
           <div className="grid gap-2 text-sm text-muted">
-            <a href="#services" className="hover:text-foreground">
+            <Link href="/#services" className="hover:text-foreground">
               Services
-            </a>
-            <a href="#booking" className="hover:text-foreground">
+            </Link>
+            <Link href="/blog" className="hover:text-foreground">
+              Blog
+            </Link>
+            <Link href="/#booking" className="hover:text-foreground">
               Book an appointment
-            </a>
-            <a href="#contact" className="hover:text-foreground">
+            </Link>
+            <Link href="/#contact" className="hover:text-foreground">
               Contact
-            </a>
+            </Link>
           </div>
         </div>
       </div>

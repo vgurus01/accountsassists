@@ -1,4 +1,4 @@
-import { getDefaultSlots, isWeekday } from "@/app/lib/time";
+import { getDefaultSlots, isBookableDay } from "@/app/lib/time";
 
 export const runtime = "nodejs";
 
@@ -20,6 +20,6 @@ export async function GET(
     return new Response("Invalid date format.", { status: 400 });
   }
 
-  const slots = isWeekday(parsed) ? getDefaultSlots() : [];
+  const slots = isBookableDay(parsed) ? getDefaultSlots() : [];
   return Response.json({ date: requested, slots });
 }

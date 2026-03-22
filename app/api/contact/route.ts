@@ -1,5 +1,5 @@
 import { SERVICES } from "@/app/lib/services";
-import { getDefaultSlots, isWeekday } from "@/app/lib/time";
+import { getDefaultSlots, isBookableDay } from "@/app/lib/time";
 import { sendResendEmail } from "@/app/lib/server/email";
 
 export const runtime = "nodejs";
@@ -61,8 +61,8 @@ export async function POST(request: Request) {
 
   if (payload.callback) {
     const callbackDate = parseISODate(payload.callback.date);
-    if (!callbackDate || !isWeekday(callbackDate)) {
-      return new Response("Callbacks are weekdays only.", { status: 400 });
+    if (!callbackDate || !isBookableDay(callbackDate)) {
+      return new Response("Callbacks are available every day.", { status: 400 });
     }
     if (!getDefaultSlots().includes(payload.callback.time)) {
       return new Response("Invalid callback time.", { status: 400 });

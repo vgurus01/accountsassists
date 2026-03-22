@@ -5,9 +5,9 @@ export function formatISODate(date: Date) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-export function isWeekday(date: Date) {
+export function isBookableDay(date: Date) {
   const day = date.getDay(); // 0 Sun ... 6 Sat
-  return day >= 1 && day <= 5;
+  return day >= 0 && day <= 6;
 }
 
 export function startOfDay(date: Date) {
@@ -21,4 +21,3 @@ export function getDefaultSlots() {
   }
   return hours;
 }
-

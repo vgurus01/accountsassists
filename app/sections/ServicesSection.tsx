@@ -13,9 +13,11 @@ export default function ServicesSection() {
               Our comprehensive services.
             </h2>
             <p className="mt-4 text-sm leading-7 text-muted md:text-base">
-              We offer a full range of accounting and tax services tailored to
-              meet your specific needs. Whether you&apos;re an individual or a
-              business, we have a solution for you.
+              We support individuals, taxi drivers, Uber and PHV drivers,
+              restaurants, contractors, and small businesses across Watford,
+              Bushey, Croxley Green, Rickmansworth, Borehamwood, St Albans,
+              Wembley, Harrow, Stanmore, Edgware, Kenton, Kingsbury, and
+              Alperton.
             </p>
           </div>
           <a

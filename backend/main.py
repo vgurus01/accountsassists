@@ -11,11 +11,11 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 def default_slots() -> list[str]:
-    return [f"{h:02d}:00" for h in range(9, 18)]
+    return [f"{h:02d}:00" for h in range(9, 22)]
 
 
-def is_weekday(d: date) -> bool:
-    return d.weekday() < 5  # Mon=0..Sun=6
+def is_bookable_day(d: date) -> bool:
+    return 0 <= d.weekday() <= 6  # Mon=0..Sun=6
 
 
 SERVICES: list[dict[str, Any]] = [
@@ -205,7 +205,7 @@ async def list_services() -> dict[str, Any]:
 
 @app.get("/api/bookings/available-slots/{day}", response_model=AvailabilityOut)
 async def available_slots(day: date) -> AvailabilityOut:
-    if not is_weekday(day):
+    if not is_bookable_day(day):
         return AvailabilityOut(date=day, slots=[])
     booked = await storage.list_booked_times(day)
     slots = [s for s in default_slots() if s not in booked]
@@ -216,8 +216,8 @@ async def available_slots(day: date) -> AvailabilityOut:
 async def create_booking(payload: BookingIn) -> dict[str, Any]:
     if payload.service_id not in SERVICE_IDS:
         raise HTTPException(status_code=400, detail="Invalid service_id.")
-    if not is_weekday(payload.date):
-        raise HTTPException(status_code=400, detail="Bookings are available Monday–Friday only.")
+    if not is_bookable_day(payload.date):
+        raise HTTPException(status_code=400, detail="Bookings are available every day.")
     if payload.time not in default_slots():
         raise HTTPException(status_code=400, detail="Invalid time slot.")
     booking_id = await storage.create_booking(payload)
@@ -229,8 +229,8 @@ async def create_contact(payload: ContactIn) -> dict[str, Any]:
     if payload.service_id not in SERVICE_IDS:
         raise HTTPException(status_code=400, detail="Invalid service_id.")
     if payload.callback:
-        if not is_weekday(payload.callback.date):
-            raise HTTPException(status_code=400, detail="Callbacks are weekdays only.")
+        if not is_bookable_day(payload.callback.date):
+            raise HTTPException(status_code=400, detail="Callbacks are available every day.")
         if payload.callback.time not in default_slots():
             raise HTTPException(status_code=400, detail="Invalid callback time.")
     contact_id = await storage.create_contact(payload)
@@ -251,4 +251,3 @@ if __name__ == "__main__":
         port=int(os.getenv("PORT", "8000")),
         reload=True,
     )
-

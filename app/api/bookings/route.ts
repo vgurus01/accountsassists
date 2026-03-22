@@ -1,5 +1,5 @@
 import { SERVICES } from "@/app/lib/services";
-import { getDefaultSlots, isWeekday } from "@/app/lib/time";
+import { getDefaultSlots, isBookableDay } from "@/app/lib/time";
 import { sendResendEmail } from "@/app/lib/server/email";
 
 export const runtime = "nodejs";
@@ -58,8 +58,8 @@ export async function POST(request: Request) {
   }
 
   const parsedDate = parseISODate(date);
-  if (!parsedDate || !isWeekday(parsedDate)) {
-    return new Response("Bookings are weekdays only.", { status: 400 });
+  if (!parsedDate || !isBookableDay(parsedDate)) {
+    return new Response("Bookings are available every day.", { status: 400 });
   }
 
   if (!getDefaultSlots().includes(time)) {

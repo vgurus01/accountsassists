@@ -1,42 +1,28 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { SERVICES } from "./lib/services";
-import { absoluteUrl, getSiteUrl } from "./lib/seo";
-
-const SITE_NAME = "Accounts Assists";
-const DEFAULT_TITLE = "Tax Preparation & Accounting Services";
-const DEFAULT_DESCRIPTION =
-  "UK tax preparation and accounting services for individuals, contractors, taxi drivers, and small businesses. Get a free, no-obligation consultation and expert guidance from a CIMA Certified professional.";
-
-const KEYWORDS = [
-  "accounting",
-  "accounting services",
-  "bookkeeping",
-  "book-keeping",
-  "bookkeeping services",
-  "tax preparation",
-  "tax return",
-  "self assessment",
-  "self assessment tax return",
-  "company tax",
-  "corporation tax",
-  "VAT returns",
-  "VAT registration",
-  "payroll services",
-  "HMRC reporting",
-  "small business accounting",
-  "sole trader accounting",
-  "contractor accounting",
-  "taxi driver tax return",
-  "CIMA certified accountant",
-  "UK accountant",
-  "tax efficiency",
-];
-
-const BUSINESS_GEO = {
-  latitude: 51.699947,
-  longitude: -0.396249,
-};
+import {
+  absoluteUrl,
+  BUSINESS_ADDRESS,
+  BUSINESS_DAYS,
+  BUSINESS_EMAIL,
+  BUSINESS_GEO,
+  BUSINESS_META_TAGS,
+  BUSINESS_PHONE,
+  DEFAULT_DESCRIPTION,
+  DEFAULT_KEYWORDS,
+  DEFAULT_OG_IMAGE_ALT,
+  DEFAULT_PAGE_TITLE,
+  FOUNDER_NAME,
+  GOOGLE_SITE_VERIFICATION,
+  HOME_TARGET_KEYWORDS,
+  NICHE_SERVICE_TOPICS,
+  SERVICE_AREAS,
+  SITE_NAME,
+  SOCIAL_PROFILES,
+  getFullTitle,
+  getSiteUrl,
+} from "./lib/seo";
 
 const MAP_URL =
   "https://www.openstreetmap.org/?mlat=51.699947&mlon=-0.396249#map=16/51.699947/-0.396249";
@@ -54,14 +40,25 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL(getSiteUrl()),
   title: {
-    default: `${SITE_NAME} | ${DEFAULT_TITLE}`,
+    default: getFullTitle(DEFAULT_PAGE_TITLE),
     template: `%s | ${SITE_NAME}`,
   },
   description: DEFAULT_DESCRIPTION,
   applicationName: SITE_NAME,
+  authors: [{ name: SITE_NAME, url: getSiteUrl() }, { name: FOUNDER_NAME }],
+  creator: FOUNDER_NAME,
+  publisher: SITE_NAME,
+  referrer: "origin-when-cross-origin",
   manifest: "/manifest.webmanifest",
   alternates: { canonical: "/" },
-  keywords: KEYWORDS,
+  keywords: DEFAULT_KEYWORDS,
+  category: "Accounting Services",
+  classification: "Accounting Services",
+  formatDetection: {
+    telephone: false,
+    email: false,
+    address: false,
+  },
   robots: {
     index: true,
     follow: true,
@@ -73,25 +70,42 @@ export const metadata: Metadata = {
       "max-video-preview": -1,
     },
   },
+  verification: {
+    google: GOOGLE_SITE_VERIFICATION,
+  },
   openGraph: {
     type: "website",
     url: "/",
     siteName: SITE_NAME,
-    title: `${SITE_NAME} | ${DEFAULT_TITLE}`,
+    title: getFullTitle(DEFAULT_PAGE_TITLE),
     description: DEFAULT_DESCRIPTION,
     locale: "en_GB",
-    images: [{ url: absoluteUrl("/opengraph-image") }],
+    countryName: "United Kingdom",
+    emails: [BUSINESS_EMAIL],
+    phoneNumbers: [BUSINESS_PHONE],
+    images: [
+      {
+        url: absoluteUrl("/opengraph-image"),
+        alt: DEFAULT_OG_IMAGE_ALT,
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
-    title: `${SITE_NAME} | ${DEFAULT_TITLE}`,
+    title: getFullTitle(DEFAULT_PAGE_TITLE),
     description: DEFAULT_DESCRIPTION,
-    images: [absoluteUrl("/twitter-image")],
+    images: [
+      {
+        url: absoluteUrl("/twitter-image"),
+        alt: DEFAULT_OG_IMAGE_ALT,
+      },
+    ],
   },
   icons: {
     icon: [{ url: "/favicon.ico" }],
     shortcut: [{ url: "/favicon.ico" }],
   },
+  other: BUSINESS_META_TAGS,
 };
 
 export default function RootLayout({
@@ -111,83 +125,121 @@ export default function RootLayout({
 
   const jsonLd = {
     "@context": "https://schema.org",
-    "@type": "AccountingService",
-    "@id": `${getSiteUrl()}/#accountingservice`,
-    name: SITE_NAME,
-    url: getSiteUrl(),
-    email: "info@accountsassists.com",
-    telephone: "+447845420967",
-    address: {
-      "@type": "PostalAddress",
-      streetAddress: "25 Robins Place, Boundry Way",
-      addressLocality: "Watford",
-      addressRegion: "Hertfordshire",
-      postalCode: "WD25 7SL",
-      addressCountry: "GB",
-    },
-    geo: {
-      "@type": "GeoCoordinates",
-      latitude: BUSINESS_GEO.latitude,
-      longitude: BUSINESS_GEO.longitude,
-    },
-    hasMap: MAP_URL,
-    areaServed: [
+    "@graph": [
       {
-        "@type": "Country",
-        name: "United Kingdom",
+        "@type": "WebSite",
+        "@id": `${getSiteUrl()}/#website`,
+        url: getSiteUrl(),
+        name: SITE_NAME,
+        description: DEFAULT_DESCRIPTION,
+        inLanguage: "en-GB",
+        publisher: {
+          "@id": `${getSiteUrl()}/#accountingservice`,
+        },
       },
       {
-        "@type": "City",
-        name: "London",
-      },
-      {
-        "@type": "City",
-        name: "Watford",
+        "@type": "AccountingService",
+        "@id": `${getSiteUrl()}/#accountingservice`,
+        name: SITE_NAME,
+        url: getSiteUrl(),
+        description: DEFAULT_DESCRIPTION,
+        email: BUSINESS_EMAIL,
+        telephone: BUSINESS_PHONE,
+        image: absoluteUrl("/opengraph-image"),
+        sameAs: SOCIAL_PROFILES,
+        address: {
+          "@type": "PostalAddress",
+          ...BUSINESS_ADDRESS,
+        },
+        geo: {
+          "@type": "GeoCoordinates",
+          latitude: BUSINESS_GEO.latitude,
+          longitude: BUSINESS_GEO.longitude,
+        },
+        hasMap: MAP_URL,
+        priceRange: "££",
+        openingHoursSpecification: [
+          {
+            "@type": "OpeningHoursSpecification",
+            dayOfWeek: BUSINESS_DAYS,
+            opens: "09:00",
+            closes: "21:00",
+          },
+        ],
+        areaServed: [
+          {
+            "@type": "Country",
+            name: "United Kingdom",
+          },
+          {
+            "@type": "City",
+            name: "London",
+          },
+          {
+            "@type": "City",
+            name: "Watford",
+          },
+          ...SERVICE_AREAS.map((location) => ({
+            "@type": "Place",
+            name: location,
+          })),
+        ],
+        serviceArea: [
+          {
+            "@type": "Country",
+            name: "United Kingdom",
+          },
+          {
+            "@type": "AdministrativeArea",
+            name: "Greater London",
+          },
+          {
+            "@type": "City",
+            name: "Watford",
+          },
+          ...SERVICE_AREAS.map((location) => ({
+            "@type": "Place",
+            name: location,
+          })),
+        ],
+        contactPoint: [
+          {
+            "@type": "ContactPoint",
+            contactType: "customer service",
+            telephone: BUSINESS_PHONE,
+            email: BUSINESS_EMAIL,
+            availableLanguage: ["en"],
+          },
+        ],
+        knowsAbout: [
+          "Tax preparation",
+          "Self assessment tax returns",
+          "Bookkeeping",
+          "Company tax",
+          "Corporation tax",
+          "VAT returns",
+          "Payroll",
+          "HMRC reporting",
+          "Small business accounting",
+          ...NICHE_SERVICE_TOPICS,
+          ...HOME_TARGET_KEYWORDS,
+        ],
+        hasOfferCatalog: {
+          "@type": "OfferCatalog",
+          name: "Accounting & Tax Services",
+          itemListElement: serviceOffers,
+        },
+        subjectOf: {
+          "@type": "Blog",
+          name: "Accounts Assists Blog",
+          url: `${getSiteUrl()}/blog`,
+        },
+        founder: {
+          "@type": "Person",
+          name: FOUNDER_NAME,
+        },
       },
     ],
-    serviceArea: [
-      {
-        "@type": "Country",
-        name: "United Kingdom",
-      },
-      {
-        "@type": "AdministrativeArea",
-        name: "Greater London",
-      },
-      {
-        "@type": "City",
-        name: "Watford",
-      },
-    ],
-    contactPoint: [
-      {
-        "@type": "ContactPoint",
-        contactType: "customer service",
-        telephone: "+447845420967",
-        email: "info@accountsassists.com",
-        availableLanguage: ["en"],
-      },
-    ],
-    knowsAbout: [
-      "Tax preparation",
-      "Self assessment tax returns",
-      "Bookkeeping",
-      "Company tax",
-      "Corporation tax",
-      "VAT returns",
-      "Payroll",
-      "HMRC reporting",
-      "Small business accounting",
-    ],
-    hasOfferCatalog: {
-      "@type": "OfferCatalog",
-      name: "Accounting & Tax Services",
-      itemListElement: serviceOffers,
-    },
-    founder: {
-      "@type": "Person",
-      name: "Susiri Padmakumara",
-    },
   };
 
   return (

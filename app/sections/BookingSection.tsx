@@ -6,7 +6,7 @@ import { SERVICES, type ServiceId } from "../lib/services";
 import {
   formatISODate,
   getDefaultSlots,
-  isWeekday,
+  isBookableDay,
   startOfDay,
 } from "../lib/time";
 
@@ -18,10 +18,10 @@ function addDays(date: Date, days: number) {
   return d;
 }
 
-function getNextWeekday(from: Date) {
+function getNextBookableDay(from: Date) {
   let d = startOfDay(from);
   for (let i = 0; i < 14; i += 1) {
-    if (isWeekday(d)) return d;
+    if (isBookableDay(d)) return d;
     d = addDays(d, 1);
   }
   return startOfDay(from);
@@ -42,8 +42,8 @@ export default function BookingSection() {
   const apiBase = getApiBase();
 
   const today = useMemo(() => startOfDay(new Date()), []);
-  const [monthAnchor, setMonthAnchor] = useState(() => getNextWeekday(today));
-  const [selectedDate, setSelectedDate] = useState(() => getNextWeekday(today));
+  const [monthAnchor, setMonthAnchor] = useState(() => getNextBookableDay(today));
+  const [selectedDate, setSelectedDate] = useState(() => getNextBookableDay(today));
 
   const [serviceId, setServiceId] = useState<ServiceId>("accounting-bookkeeping");
   const [slots, setSlots] = useState<string[]>([]);
@@ -86,7 +86,7 @@ export default function BookingSection() {
       }
     }
 
-    if (!isWeekday(selectedDate) || selectedDate < today) {
+    if (!isBookableDay(selectedDate) || selectedDate < today) {
       setSlots([]);
       return;
     }
@@ -145,7 +145,7 @@ export default function BookingSection() {
             Booking
           </div>
           <h2 className="mt-3 text-3xl leading-tight md:text-4xl">
-            Book an appointment (Mon–Fri, 9am–9pm).
+            Book an appointment (Daily, 9am–9pm).
           </h2>
           <p className="mt-4 text-sm leading-7 text-muted md:text-base">
             Choose a date, pick a time slot, and tell us what you need. If you
@@ -192,7 +192,8 @@ export default function BookingSection() {
             <div className="grid grid-cols-7 gap-px bg-border">
               {days.map((d) => {
                 const isCurrentMonth = d.getMonth() === month;
-                const disabled = !isCurrentMonth || d < today || !isWeekday(d);
+                const disabled =
+                  !isCurrentMonth || d < today || !isBookableDay(d);
                 const isSelected = formatISODate(d) === selectedISO;
                 return (
                   <button
@@ -241,7 +242,7 @@ export default function BookingSection() {
                   ))
                 ) : (
                   <div className="col-span-3 text-sm text-muted">
-                    Select a weekday date to see availability.
+                    Select a date from today onwards to see availability.
                   </div>
                 )}
               </div>
