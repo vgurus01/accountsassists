@@ -66,10 +66,10 @@ export default function HeroSection() {
           </div>
           <div className="absolute inset-0 bg-noise" aria-hidden="true" />
           <Image
-            src="/hero-handshake.svg"
-            alt="Business handshake in grayscale"
+            src="/hero.jpg"
+            alt="Business meeting hero image"
             fill
-            className="object-cover grayscale contrast-125"
+            className="object-cover"
             priority
           />
         </div>

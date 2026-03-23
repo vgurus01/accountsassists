@@ -6,6 +6,6 @@ const AdminDashboard = dynamic(() => import("./AdminDashboard"), {
   ssr: false,
 });
 
-export default function AdminDashboardShell({ login }: { login: string }) {
-  return <AdminDashboard login={login} />;
+export default function AdminDashboardShell() {
+  return <AdminDashboard />;
 }

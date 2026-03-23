@@ -102,8 +102,8 @@ export const metadata: Metadata = {
     ],
   },
   icons: {
-    icon: [{ url: "/favicon.ico" }],
-    shortcut: [{ url: "/favicon.ico" }],
+    icon: [{ url: "/LogoAA.png" }],
+    shortcut: [{ url: "/LogoAA.png" }],
   },
   other: BUSINESS_META_TAGS,
 };

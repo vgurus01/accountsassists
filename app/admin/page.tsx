@@ -8,8 +8,8 @@ import {
 } from "../lib/server/admin-auth";
 
 export const metadata: Metadata = {
-  title: "Admin",
-  description: "Accounts Assists internal admin workspace.",
+  title: "Blog Manager",
+  description: "Accounts Assists internal blog management workspace.",
   alternates: { canonical: "/admin" },
   robots: {
     index: false,
@@ -33,5 +33,5 @@ export default async function AdminPage() {
     redirect("/admin/login");
   }
 
-  return <AdminDashboardShell login={session.login} />;
+  return <AdminDashboardShell />;
 }

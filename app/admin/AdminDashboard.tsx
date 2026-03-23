@@ -1,83 +1,99 @@
 "use client";
 
-import Link from "next/link";
 import {
   startTransition,
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type KeyboardEvent,
 } from "react";
 import {
   ADMIN_BLOG_STORAGE_KEY,
+  LEGACY_ADMIN_BLOG_STORAGE_KEY,
   createEmptyManagedPost,
   getSeedAdminStore,
+  hydrateAdminStore,
   slugify,
-  type BlogActivity,
-  type BlogActivityType,
   type BlogAdminStore,
+  type BlogStatus,
   type ManagedBlogFaq,
   type ManagedBlogPost,
   type ManagedBlogSection,
 } from "../lib/admin-blog";
 
-type StatusFilter = "all" | "published" | "draft";
+const DEFAULT_CATEGORIES = [
+  "Self Assessment",
+  "Bookkeeping",
+  "Tax Planning",
+  "VAT",
+  "Payroll",
+  "Business Advice",
+];
 
-const STATUS_OPTIONS: StatusFilter[] = ["all", "published", "draft"];
+const PANEL_CLASS = "rounded-xl border border-gray-200 bg-white shadow-sm";
+const SECTION_CLASS = "rounded-xl border border-gray-200 bg-gray-50";
+const LABEL_CLASS =
+  "text-xs font-semibold uppercase tracking-[0.22em] text-gray-500";
+const INPUT_CLASS =
+  "w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-800 outline-none transition-colors placeholder:text-gray-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-50";
+const PRIMARY_BUTTON_CLASS =
+  "inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-100";
+const SECONDARY_BUTTON_CLASS =
+  "inline-flex items-center justify-center rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-50 focus:outline-none focus:ring-4 focus:ring-gray-100";
+const DANGER_BUTTON_CLASS =
+  "inline-flex items-center justify-center rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 transition-colors hover:bg-red-50 focus:outline-none focus:ring-4 focus:ring-red-100";
+const ICON_DANGER_BUTTON_CLASS =
+  "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-red-200 bg-white text-red-600 transition-colors hover:bg-red-50 focus:outline-none focus:ring-4 focus:ring-red-100";
 
 function loadAdminStore() {
   if (typeof window === "undefined") return getSeedAdminStore();
 
-  try {
-    const raw = window.localStorage.getItem(ADMIN_BLOG_STORAGE_KEY);
-    if (!raw) return getSeedAdminStore();
-    const parsed = JSON.parse(raw) as BlogAdminStore;
-    if (!Array.isArray(parsed.posts) || !Array.isArray(parsed.activities)) {
-      return getSeedAdminStore();
+  for (const key of [ADMIN_BLOG_STORAGE_KEY, LEGACY_ADMIN_BLOG_STORAGE_KEY]) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+
+      const parsed = JSON.parse(raw);
+      const hydrated = hydrateAdminStore(parsed);
+      if (hydrated) return hydrated;
+    } catch {
+      continue;
     }
-    return parsed;
-  } catch {
-    return getSeedAdminStore();
   }
+
+  return getSeedAdminStore();
 }
 
 function saveAdminStore(store: BlogAdminStore) {
   if (typeof window === "undefined") return;
+
   window.localStorage.setItem(ADMIN_BLOG_STORAGE_KEY, JSON.stringify(store));
 }
 
 function formatDateLabel(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "No date";
+  }
+
   return new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
     month: "short",
     year: "numeric",
-  }).format(new Date(value));
+  }).format(date);
 }
 
-function formatDateTimeLabel(value: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-function relativeTimeLabel(value: string) {
-  const diff = Date.now() - new Date(value).getTime();
-  const minutes = Math.max(1, Math.round(diff / 60000));
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  return `${days}d ago`;
+function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function linesToList(value: string) {
   return value
-    .split("\n")
-    .map((line) => line.trim())
+    .split(/[\n,]/)
+    .map((item) => item.trim())
     .filter(Boolean);
 }
 
@@ -85,91 +101,374 @@ function listToLines(values: string[]) {
   return values.join("\n");
 }
 
-function createActivity(
-  type: BlogActivityType,
-  title: string,
-  summary: string,
-  postId?: string,
-): BlogActivity {
-  return {
-    id: `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    type,
-    postId,
-    title,
-    summary,
-    happenedAt: new Date().toISOString(),
-  };
+function isEditorHtmlEmpty(value: string) {
+  return !value
+    .replace(/<br\s*\/?>/gi, "")
+    .replace(/&nbsp;/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .trim();
 }
 
-function applyActivity(store: BlogAdminStore, activity: BlogActivity) {
-  return {
-    ...store,
-    activities: [activity, ...store.activities].slice(0, 80),
-  };
-}
-
-function computeSeoChecklist(post: ManagedBlogPost) {
-  const titleLength = post.seoTitle.trim().length;
-  const descriptionLength = post.seoDescription.trim().length;
-
-  return [
-    {
-      label: "SEO title is filled and readable",
-      pass: titleLength >= 35 && titleLength <= 65,
-    },
-    {
-      label: "Meta description is in a good range",
-      pass: descriptionLength >= 120 && descriptionLength <= 170,
-    },
-    {
-      label: "Slug is clean and URL-safe",
-      pass: !!post.slug && !post.slug.includes(" "),
-    },
-    {
-      label: "Keywords are specific enough",
-      pass: post.keywords.length >= 5,
-    },
-    {
-      label: "Article has useful depth",
-      pass: post.sections.length >= 3,
-    },
-    {
-      label: "FAQ helps long-tail search intent",
-      pass: post.faq.length >= 1,
-    },
-    {
-      label: "Target locations are set",
-      pass: post.targetLocations.length >= 1,
-    },
-  ];
-}
-
-function getWordCount(post: ManagedBlogPost) {
-  return post.sections
-    .flatMap((section) => [section.title, ...section.body])
-    .join(" ")
-    .split(/\s+/)
-    .filter(Boolean).length;
-}
-
-function createDuplicateSlug(slug: string, posts: ManagedBlogPost[]) {
-  const base = slugify(slug) || "untitled-post";
-  if (!posts.some((post) => post.slug === base)) return base;
-
-  let suffix = 2;
-  while (posts.some((post) => post.slug === `${base}-${suffix}`)) {
-    suffix += 1;
+function bodyHtmlToSections(
+  value: string,
+  slug: string,
+): ManagedBlogSection[] {
+  if (typeof window === "undefined") {
+    return [
+      {
+        id: `${slug}-section-1`,
+        title: "Main content",
+        body: [],
+      },
+    ];
   }
-  return `${base}-${suffix}`;
+
+  const documentFragment = new DOMParser().parseFromString(value, "text/html");
+  const sections: Array<{ title: string; body: string[] }> = [];
+  let currentSection: { title: string; body: string[] } | null = null;
+
+  const ensureSection = () => {
+    if (!currentSection) {
+      currentSection = {
+        title: sections.length === 0 ? "Main content" : `Section ${sections.length + 1}`,
+        body: [],
+      };
+    }
+
+    return currentSection;
+  };
+
+  const commitSection = () => {
+    if (!currentSection) return;
+
+    const body = currentSection.body.map(normalizeWhitespace).filter(Boolean);
+    const title = normalizeWhitespace(currentSection.title) || "Main content";
+
+    if (body.length || title) {
+      sections.push({ title, body });
+    }
+
+    currentSection = null;
+  };
+
+  const addParagraph = (text: string) => {
+    const normalized = normalizeWhitespace(text);
+    if (!normalized) return;
+    ensureSection().body.push(normalized);
+  };
+
+  const visitNodes = (nodes: ChildNode[]) => {
+    for (const node of nodes) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        addParagraph(node.textContent ?? "");
+        continue;
+      }
+
+      if (!(node instanceof HTMLElement)) {
+        continue;
+      }
+
+      const tag = node.tagName.toUpperCase();
+
+      if (/^H[1-6]$/.test(tag)) {
+        commitSection();
+        currentSection = {
+          title: normalizeWhitespace(node.textContent ?? "") || `Section ${sections.length + 1}`,
+          body: [],
+        };
+        continue;
+      }
+
+      if (tag === "UL" || tag === "OL") {
+        for (const item of Array.from(node.children)) {
+          addParagraph(`• ${item.textContent ?? ""}`);
+        }
+        continue;
+      }
+
+      if (tag === "P" || tag === "BLOCKQUOTE" || tag === "LI") {
+        addParagraph(node.textContent ?? "");
+        continue;
+      }
+
+      if (tag === "BR") {
+        continue;
+      }
+
+      const hasStructuredChildren = Array.from(node.children).some((child) =>
+        /^(H[1-6]|UL|OL|P|DIV|BLOCKQUOTE|SECTION|ARTICLE)$/.test(
+          child.tagName.toUpperCase(),
+        ),
+      );
+
+      if (hasStructuredChildren) {
+        visitNodes(Array.from(node.childNodes));
+        continue;
+      }
+
+      addParagraph(node.textContent ?? "");
+    }
+  };
+
+  visitNodes(Array.from(documentFragment.body.childNodes));
+  commitSection();
+
+  if (!sections.length) {
+    return [
+      {
+        id: `${slug}-section-1`,
+        title: "Main content",
+        body: [],
+      },
+    ];
+  }
+
+  return sections.map((section, index) => ({
+    id: `${slug}-section-${index + 1}`,
+    title: section.title,
+    body: section.body,
+  }));
 }
 
-export default function AdminDashboard({ login }: { login: string }) {
+function SearchIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+    >
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+    >
+      <path d="M4 7h16" strokeLinecap="round" />
+      <path d="M10 3h4" strokeLinecap="round" />
+      <path d="M6 7l1 13h10l1-13" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 11v5" strokeLinecap="round" />
+      <path d="M14 11v5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+    >
+      <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function StatusBadge({ status }: { status: BlogStatus }) {
+  return (
+    <span
+      className={[
+        "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.2em]",
+        status === "published"
+          ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+          : "border border-amber-200 bg-amber-50 text-amber-700",
+      ].join(" ")}
+    >
+      {status === "published" ? "Published" : "Draft"}
+    </span>
+  );
+}
+
+type PostCardProps = {
+  post: ManagedBlogPost;
+  isActive: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+};
+
+function PostCard({ post, isActive, onSelect, onDelete }: PostCardProps) {
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onSelect();
+    }
+  }
+
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={onKeyDown}
+      className={[
+        "cursor-pointer rounded-xl border p-4 text-left transition-colors",
+        isActive
+          ? "border-emerald-200 bg-emerald-50"
+          : "border-gray-200 bg-gray-50 hover:border-emerald-200 hover:bg-emerald-50/40",
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-gray-800">
+            {post.title}
+          </p>
+        </div>
+        <StatusBadge status={post.status} />
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600">
+          {post.category}
+        </span>
+        <span className="text-xs text-gray-500">
+          {formatDateLabel(post.publishedAt)}
+        </span>
+      </div>
+
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          aria-label={`Delete ${post.title}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          className={ICON_DANGER_BUTTON_CLASS}
+        >
+          <TrashIcon className="h-4 w-4" />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+type ToolbarButtonProps = {
+  label: string;
+  title: string;
+  onClick: () => void;
+};
+
+function ToolbarButton({ label, title, onClick }: ToolbarButtonProps) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className="inline-flex h-9 min-w-9 items-center justify-center rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100 focus:outline-none focus:ring-4 focus:ring-gray-100"
+    >
+      {label}
+    </button>
+  );
+}
+
+type RichTextEditorProps = {
+  value: string;
+  onChange: (value: string) => void;
+};
+
+function RichTextEditor({ value, onChange }: RichTextEditorProps) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const [isEmpty, setIsEmpty] = useState(isEditorHtmlEmpty(value));
+
+  useEffect(() => {
+    if (!editorRef.current) return;
+    if (editorRef.current.innerHTML === value) return;
+
+    editorRef.current.innerHTML = value;
+  }, [value]);
+
+  function emitChange() {
+    const nextValue = editorRef.current?.innerHTML ?? "";
+    setIsEmpty(isEditorHtmlEmpty(nextValue));
+    onChange(nextValue);
+  }
+
+  function runCommand(command: string, commandValue?: string) {
+    editorRef.current?.focus();
+    document.execCommand(command, false, commandValue);
+    emitChange();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        <ToolbarButton
+          label="B"
+          title="Bold"
+          onClick={() => runCommand("bold")}
+        />
+        <ToolbarButton
+          label="I"
+          title="Italic"
+          onClick={() => runCommand("italic")}
+        />
+        <ToolbarButton
+          label="H2"
+          title="Heading 2"
+          onClick={() => runCommand("formatBlock", "H2")}
+        />
+        <ToolbarButton
+          label="H3"
+          title="Heading 3"
+          onClick={() => runCommand("formatBlock", "H3")}
+        />
+        <ToolbarButton
+          label="• List"
+          title="Bulleted list"
+          onClick={() => runCommand("insertUnorderedList")}
+        />
+      </div>
+
+      <div className="relative">
+        {isEmpty ? (
+          <span className="pointer-events-none absolute left-4 top-4 text-sm text-gray-400">
+            Start writing the article body...
+          </span>
+        ) : null}
+
+        <div
+          ref={editorRef}
+          contentEditable
+          suppressContentEditableWarning
+          onInput={emitChange}
+          onBlur={emitChange}
+          onPaste={(event) => {
+            event.preventDefault();
+            const text = event.clipboardData.getData("text/plain");
+            document.execCommand("insertText", false, text);
+            emitChange();
+          }}
+          className="min-h-[24rem] rounded-xl border border-gray-200 bg-white px-4 py-4 text-base leading-7 text-gray-800 outline-none transition-colors focus:border-emerald-500 focus:ring-4 focus:ring-emerald-50 [&_h1]:mb-4 [&_h1]:mt-6 [&_h1]:text-3xl [&_h1]:font-semibold [&_h2]:mb-4 [&_h2]:mt-6 [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:mb-3 [&_h3]:mt-5 [&_h3]:text-xl [&_h3]:font-semibold [&_li]:ml-5 [&_li]:list-disc [&_p]:mb-4 [&_ul]:mb-4 [&_ul]:space-y-2"
+        />
+      </div>
+    </div>
+  );
+}
+
+export default function AdminDashboard() {
   const [store, setStore] = useState<BlogAdminStore>(loadAdminStore);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
-  const [loggingOut, setLoggingOut] = useState(false);
-
   const deferredSearch = useDeferredValue(search);
 
   useEffect(() => {
@@ -178,16 +477,19 @@ export default function AdminDashboard({ login }: { login: string }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const onStorage = () => {
-      const nextStore = loadAdminStore();
-      setStore(nextStore);
-      setSelectedId((current) => {
-        if (current && nextStore.posts.some((post) => post.id === current)) {
-          return current;
-        }
-        return nextStore.posts[0]?.id ?? null;
-      });
+
+    const onStorage = (event: StorageEvent) => {
+      if (
+        event.key &&
+        event.key !== ADMIN_BLOG_STORAGE_KEY &&
+        event.key !== LEGACY_ADMIN_BLOG_STORAGE_KEY
+      ) {
+        return;
+      }
+
+      setStore(loadAdminStore());
     };
+
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
@@ -195,8 +497,9 @@ export default function AdminDashboard({ login }: { login: string }) {
   const sortedPosts = useMemo(
     () =>
       [...store.posts].sort(
-        (a, b) =>
-          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+        (firstPost, secondPost) =>
+          new Date(secondPost.updatedAt).getTime() -
+          new Date(firstPost.updatedAt).getTime(),
       ),
     [store.posts],
   );
@@ -205,132 +508,101 @@ export default function AdminDashboard({ login }: { login: string }) {
     const query = deferredSearch.trim().toLowerCase();
 
     return sortedPosts.filter((post) => {
-      if (filter !== "all" && post.status !== filter) return false;
       if (!query) return true;
+
       return [
         post.title,
-        post.slug,
         post.category,
-        post.description,
+        post.slug,
+        post.seoTitle,
+        post.seoDescription,
         ...post.keywords,
-        ...post.targetLocations,
       ]
         .join(" ")
         .toLowerCase()
         .includes(query);
     });
-  }, [deferredSearch, filter, sortedPosts]);
+  }, [deferredSearch, sortedPosts]);
 
   const activeSelectedId =
-    selectedId && filteredPosts.some((post) => post.id === selectedId)
+    selectedId && store.posts.some((post) => post.id === selectedId)
       ? selectedId
-      : filteredPosts[0]?.id ?? null;
+      : store.posts[0]?.id ?? null;
 
   const selectedPost =
     sortedPosts.find((post) => post.id === activeSelectedId) ?? null;
 
-  const seoChecklist = useMemo(
-    () => (selectedPost ? computeSeoChecklist(selectedPost) : []),
-    [selectedPost],
+  const categoryOptions = useMemo(
+    () =>
+      Array.from(
+        new Set([...DEFAULT_CATEGORIES, ...store.posts.map((post) => post.category)]),
+      ),
+    [store.posts],
   );
-
-  const seoScore = useMemo(() => {
-    if (!seoChecklist.length) return 0;
-    const passed = seoChecklist.filter((item) => item.pass).length;
-    return Math.round((passed / seoChecklist.length) * 100);
-  }, [seoChecklist]);
-
-  const stats = useMemo(() => {
-    const publishedCount = store.posts.filter((post) => post.status === "published").length;
-    const draftCount = store.posts.filter((post) => post.status === "draft").length;
-    const words = store.posts.reduce((sum, post) => sum + getWordCount(post), 0);
-
-    return {
-      total: store.posts.length,
-      published: publishedCount,
-      drafts: draftCount,
-      activity: store.activities.length,
-      words,
-    };
-  }, [store.activities.length, store.posts]);
 
   function replaceSelectedPost(
     updater: (post: ManagedBlogPost) => ManagedBlogPost,
-    activity?: (post: ManagedBlogPost) => BlogActivity,
   ) {
-    if (!selectedPost) return;
+    if (!activeSelectedId) return;
 
-    setStore((current) => {
-      const posts = current.posts.map((post) =>
-        post.id === selectedPost.id ? updater(post) : post,
-      );
-      const updatedPost = posts.find((post) => post.id === selectedPost.id);
-      if (!updatedPost) return current;
-      const nextStore = { ...current, posts };
-      return activity ? applyActivity(nextStore, activity(updatedPost)) : nextStore;
-    });
+    setStore((current) => ({
+      ...current,
+      posts: current.posts.map((post) =>
+        post.id === activeSelectedId ? updater(post) : post,
+      ),
+    }));
   }
 
   function updateTitle(value: string) {
     if (!selectedPost) return;
-    const currentSlug = selectedPost.slug;
-    const generatedFromOldTitle = slugify(selectedPost.title);
-    const generatedFromNewTitle = slugify(value) || currentSlug;
 
-    replaceSelectedPost((post) => ({
-      ...post,
-      title: value,
-      seoTitle: post.seoTitle === selectedPost.title ? value : post.seoTitle,
-      slug:
-        !post.slug || post.slug === generatedFromOldTitle ? generatedFromNewTitle : post.slug,
-    }));
+    const currentGeneratedSlug = slugify(selectedPost.title);
+    const nextGeneratedSlug = slugify(value) || selectedPost.slug;
+
+    replaceSelectedPost((post) => {
+      const nextSlug =
+        !post.slug || post.slug === currentGeneratedSlug
+          ? nextGeneratedSlug
+          : post.slug;
+
+      return {
+        ...post,
+        title: value,
+        slug: nextSlug,
+        seoTitle: post.seoTitle === selectedPost.title ? value : post.seoTitle,
+        sections: bodyHtmlToSections(post.bodyHtml, nextSlug),
+      };
+    });
   }
 
   function updateSimpleField<K extends keyof ManagedBlogPost>(
     key: K,
     value: ManagedBlogPost[K],
   ) {
-    replaceSelectedPost((post) => ({ ...post, [key]: value }));
+    replaceSelectedPost((post) => {
+      const nextPost = {
+        ...post,
+        [key]: value,
+      };
+
+      if (key === "slug") {
+        const nextSlug = slugify(String(value)) || post.slug;
+        return {
+          ...nextPost,
+          slug: nextSlug,
+          sections: bodyHtmlToSections(post.bodyHtml, nextSlug),
+        };
+      }
+
+      return nextPost;
+    });
   }
 
-  function updateSection(
-    sectionId: string,
-    field: keyof ManagedBlogSection,
-    value: string,
-  ) {
+  function updateBodyHtml(value: string) {
     replaceSelectedPost((post) => ({
       ...post,
-      sections: post.sections.map((section) =>
-        section.id === sectionId
-          ? {
-              ...section,
-              [field]:
-                field === "body" ? value.split("\n\n").map((line) => line.trim()).filter(Boolean) : value,
-            }
-          : section,
-      ),
-    }));
-  }
-
-  function addSection() {
-    replaceSelectedPost((post) => ({
-      ...post,
-      sections: [
-        ...post.sections,
-        {
-          id: `${post.slug || "post"}-section-${post.sections.length + 1}-${Date.now()}`,
-          title: `${post.sections.length + 1}. New section`,
-          body: ["Add a clear paragraph here."],
-        },
-      ],
-    }));
-  }
-
-  function removeSection(sectionId: string) {
-    if (!selectedPost || selectedPost.sections.length === 1) return;
-    replaceSelectedPost((post) => ({
-      ...post,
-      sections: post.sections.filter((section) => section.id !== sectionId),
+      bodyHtml: value,
+      sections: bodyHtmlToSections(value, post.slug),
     }));
   }
 
@@ -353,965 +625,423 @@ export default function AdminDashboard({ login }: { login: string }) {
       faq: [
         ...post.faq,
         {
-          id: `${post.slug || "post"}-faq-${post.faq.length + 1}-${Date.now()}`,
+          id: `${post.slug}-faq-${post.faq.length + 1}-${Date.now()}`,
           question: "New question",
-          answer: "Write a short, direct answer.",
+          answer: "Write a direct answer here.",
         },
       ],
     }));
   }
 
   function removeFaq(faqId: string) {
-    if (!selectedPost || selectedPost.faq.length === 1) return;
     replaceSelectedPost((post) => ({
       ...post,
-      faq: post.faq.filter((item) => item.id !== faqId),
+      faq: post.faq.filter((faq) => faq.id !== faqId),
     }));
   }
 
   function createPost() {
-    const blankPost = createEmptyManagedPost();
-    setStore((current) =>
-      applyActivity(
-        {
-          ...current,
-          posts: [blankPost, ...current.posts],
-        },
-        createActivity(
-          "created",
-          "Draft created",
-          `Opened a new draft workspace for ${blankPost.title}.`,
-          blankPost.id,
-        ),
-      ),
-    );
-    setFilter("all");
+    const newPost = createEmptyManagedPost();
+
+    setStore((current) => ({
+      ...current,
+      posts: [newPost, ...current.posts],
+    }));
+
     setSearch("");
-    startTransition(() => setSelectedId(blankPost.id));
-  }
-
-  function duplicatePost() {
-    if (!selectedPost) return;
-
-    const now = new Date().toISOString();
-    const duplicateSlug = createDuplicateSlug(selectedPost.slug, store.posts);
-    const duplicate: ManagedBlogPost = {
-      ...selectedPost,
-      id: `${selectedPost.id}-copy-${Date.now()}`,
-      title: `${selectedPost.title} Copy`,
-      slug: duplicateSlug,
-      status: "draft",
-      createdAt: now,
-      updatedAt: now.slice(0, 10),
-      publishedAt: now.slice(0, 10),
-      sections: selectedPost.sections.map((section, index) => ({
-        ...section,
-        id: `${duplicateSlug}-section-${index + 1}`,
-      })),
-      faq: selectedPost.faq.map((item, index) => ({
-        ...item,
-        id: `${duplicateSlug}-faq-${index + 1}`,
-      })),
-    };
-
-    setStore((current) =>
-      applyActivity(
-        {
-          ...current,
-          posts: [duplicate, ...current.posts],
-        },
-        createActivity(
-          "duplicated",
-          "Post duplicated",
-          `Created a draft copy of ${selectedPost.title}.`,
-          duplicate.id,
-        ),
-      ),
-    );
-    setFilter("all");
-    setSearch("");
-    startTransition(() => setSelectedId(duplicate.id));
+    startTransition(() => setSelectedId(newPost.id));
   }
 
   function saveDraft() {
-    if (!selectedPost) return;
+    const today = new Date().toISOString().slice(0, 10);
 
-    replaceSelectedPost(
-      (post) => ({
-        ...post,
-        status: "draft",
-        updatedAt: new Date().toISOString().slice(0, 10),
-      }),
-      (post) =>
-        createActivity(
-          "updated",
-          "Draft saved",
-          `Saved ${post.title} as a draft.`,
-          post.id,
-        ),
-    );
+    replaceSelectedPost((post) => ({
+      ...post,
+      status: "draft",
+      updatedAt: today,
+      sections: bodyHtmlToSections(post.bodyHtml, post.slug),
+    }));
   }
 
   function publishPost() {
-    if (!selectedPost) return;
+    const today = new Date().toISOString().slice(0, 10);
 
-    replaceSelectedPost(
-      (post) => ({
-        ...post,
-        status: "published",
-        publishedAt: post.publishedAt || new Date().toISOString().slice(0, 10),
-        updatedAt: new Date().toISOString().slice(0, 10),
-      }),
-      (post) =>
-        createActivity(
-          "published",
-          "Post marked published",
-          `Updated ${post.title} to published status.`,
-          post.id,
-        ),
-    );
+    replaceSelectedPost((post) => ({
+      ...post,
+      status: "published",
+      publishedAt: post.publishedAt || today,
+      updatedAt: today,
+      sections: bodyHtmlToSections(post.bodyHtml, post.slug),
+    }));
   }
 
-  function deletePost() {
-    if (!selectedPost) return;
-    if (store.posts.length === 1) return;
-    if (!window.confirm(`Delete "${selectedPost.title}" from this admin workspace?`)) {
+  function deletePost(postId: string) {
+    const post = store.posts.find((item) => item.id === postId);
+    if (!post) return;
+
+    if (!window.confirm(`Delete "${post.title}"?`)) {
       return;
     }
 
-    const deletedId = selectedPost.id;
-    const deletedTitle = selectedPost.title;
+    const remainingPosts = store.posts.filter((item) => item.id !== postId);
 
-    setStore((current) =>
-      applyActivity(
-        {
-          ...current,
-          posts: current.posts.filter((post) => post.id !== deletedId),
-        },
-        createActivity(
-          "deleted",
-          "Post removed",
-          `Removed ${deletedTitle} from this workspace.`,
-          deletedId,
-        ),
-      ),
-    );
+    setStore((current) => ({
+      ...current,
+      posts: current.posts.filter((item) => item.id !== postId),
+    }));
 
-    startTransition(() => {
-      const nextPost = filteredPosts.find((post) => post.id !== deletedId) ?? store.posts.find((post) => post.id !== deletedId);
-      setSelectedId(nextPost?.id ?? null);
-    });
-  }
-
-  function resetWorkspace() {
-    if (!window.confirm("Reset the admin workspace back to the seeded blog content?")) {
-      return;
-    }
-
-    const nextStore = applyActivity(
-      getSeedAdminStore(),
-      createActivity(
-        "reset",
-        "Workspace reset",
-        "Reset the admin workspace to the seeded public blog content.",
-      ),
-    );
-
-    setStore(nextStore);
-    setSelectedId(nextStore.posts[0]?.id ?? null);
-  }
-
-  function exportWorkspace() {
-    const blob = new Blob([JSON.stringify(store, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `accountsassists-admin-${new Date()
-      .toISOString()
-      .slice(0, 10)}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function logout() {
-    setLoggingOut(true);
-
-    try {
-      const response = await fetch("/api/admin/logout", {
-        method: "POST",
-      });
-
-      if (!response.ok) {
-        setLoggingOut(false);
-        return;
-      }
-
-      window.location.href = "/admin/login";
-    } catch {
-      setLoggingOut(false);
+    if (activeSelectedId === postId) {
+      startTransition(() => setSelectedId(remainingPosts[0]?.id ?? null));
     }
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground admin-grid-bg">
-      <header className="border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="space-y-3">
-            <div className="inline-flex items-center gap-3 border border-border bg-surface px-4 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-muted">
-              <span className="h-2 w-2 bg-foreground" />
-              Admin workspace
-            </div>
-            <div>
-              <h1 className="text-4xl leading-[1.02] tracking-tight md:text-6xl">
-                Blog control
-                <br />
-                built for managers.
-              </h1>
-              <p className="mt-4 max-w-3xl text-sm leading-7 text-muted md:text-base">
-                Create articles, refine SEO fields, track status changes, and
-                keep a clean activity trail from one dashboard.
-              </p>
-            </div>
-          </div>
+    <div className="min-h-screen bg-white text-gray-800">
+      <header className="sticky top-0 z-40 border-b border-gray-200 bg-white">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+          <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">
+            Blog Manager
+          </h1>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[23rem]">
-            <div className="border border-border bg-surface p-4">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                Storage
-              </div>
-              <div className="mt-3 text-sm leading-6">
-                Browser workspace active
-              </div>
-              <div className="mt-2 text-xs leading-5 text-muted">
-                Posts and activity are saved in this browser. Wire a database
-                next if you want shared live publishing.
-              </div>
-            </div>
-            <div className="border border-border bg-background p-4">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                Session
-              </div>
-              <div className="mt-3 text-sm leading-6">
-                Signed in as <span className="font-semibold">{login}</span>
-              </div>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <Link
-                  href="/blog"
-                  className="inline-flex items-center justify-center border border-foreground px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] hover:bg-foreground hover:text-background"
-                >
-                  Visit blog
-                </Link>
-                <button
-                  type="button"
-                  onClick={exportWorkspace}
-                  className="inline-flex items-center justify-center bg-foreground px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-background hover:bg-foreground/90"
-                >
-                  Export JSON
-                </button>
-                <button
-                  type="button"
-                  onClick={logout}
-                  disabled={loggingOut}
-                  className="inline-flex items-center justify-center border border-border px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted transition-colors hover:border-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {loggingOut ? "Signing out..." : "Log out"}
-                </button>
-              </div>
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={createPost}
+            className={PRIMARY_BUTTON_CLASS}
+          >
+            New Post
+          </button>
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-7xl gap-6 px-6 py-8 xl:grid-cols-[17rem_minmax(0,1fr)_20rem]">
-        <aside className="space-y-6">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-            <div className="border border-border bg-background p-5 admin-panel">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                Total posts
-              </div>
-              <div className="mt-4 text-4xl leading-none">{stats.total}</div>
-              <div className="mt-3 text-xs uppercase tracking-[0.22em] text-muted">
-                {stats.words.toLocaleString()} words managed
-              </div>
-            </div>
-            <div className="border border-border bg-surface p-5 admin-panel">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                Published
-              </div>
-              <div className="mt-4 text-4xl leading-none">{stats.published}</div>
-              <div className="mt-3 text-xs uppercase tracking-[0.22em] text-muted">
-                {stats.drafts} drafts in queue
+      <main className="mx-auto grid max-w-[1600px] gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[21rem_minmax(0,1fr)] lg:px-8 xl:grid-cols-[24rem_minmax(0,1fr)]">
+        <aside className="lg:sticky lg:top-24 lg:h-[calc(100vh-7rem)]">
+          <div className={`flex h-full flex-col overflow-hidden ${PANEL_CLASS}`}>
+            <div className="border-b border-gray-200 p-4 sm:p-5">
+              <div className="relative">
+                <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search posts"
+                  className={`${INPUT_CLASS} bg-gray-50 py-3 pl-10 pr-4`}
+                />
               </div>
             </div>
-            <div className="border border-border bg-surface p-5 admin-panel">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                Activity
-              </div>
-              <div className="mt-4 text-4xl leading-none">{stats.activity}</div>
-              <div className="mt-3 text-xs uppercase tracking-[0.22em] text-muted">
-                Manager actions tracked
-              </div>
-            </div>
-          </div>
 
-          <div className="border border-border bg-background">
-            <div className="border-b border-border p-5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                    Post library
-                  </div>
-                  <div className="mt-2 text-lg">Search, filter, and switch.</div>
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-gray-500 sm:px-5">
+              <span>All Posts</span>
+              <span>{filteredPosts.length}</span>
+            </div>
+
+            <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
+              {filteredPosts.map((post) => (
+                <PostCard
+                  key={post.id}
+                  post={post}
+                  isActive={selectedPost?.id === post.id}
+                  onSelect={() => setSelectedId(post.id)}
+                  onDelete={() => deletePost(post.id)}
+                />
+              ))}
+
+              {!filteredPosts.length ? (
+                <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-6 text-sm text-gray-500">
+                  No posts match your search.
                 </div>
-                <button
-                  type="button"
-                  onClick={createPost}
-                  className="inline-flex items-center justify-center bg-foreground px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-background hover:bg-foreground/90"
-                >
-                  New post
-                </button>
-              </div>
-            </div>
-
-            <div className="grid gap-4 p-5">
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search title, slug, keyword, or area"
-                className="border border-border bg-surface px-4 py-3 text-sm"
-              />
-
-              <div className="flex flex-wrap gap-2">
-                {STATUS_OPTIONS.map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => setFilter(option)}
-                    className={[
-                      "border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em]",
-                      filter === option
-                        ? "border-foreground bg-foreground text-background"
-                        : "border-border bg-background text-muted hover:text-foreground",
-                    ].join(" ")}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-
-              <div className="grid gap-3">
-                {filteredPosts.map((post) => (
-                  <button
-                    key={post.id}
-                    type="button"
-                    onClick={() => setSelectedId(post.id)}
-                    className={[
-                      "border p-4 text-left transition-colors",
-                      selectedPost?.id === post.id
-                        ? "border-foreground bg-surface"
-                        : "border-border bg-background hover:bg-surface",
-                    ].join(" ")}
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                          {post.category}
-                        </div>
-                        <div className="mt-2 text-lg leading-snug">{post.title}</div>
-                      </div>
-                      <div
-                        className={[
-                          "border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.22em]",
-                          post.status === "published"
-                            ? "border-foreground bg-foreground text-background"
-                            : "border-border bg-background text-muted",
-                        ].join(" ")}
-                      >
-                        {post.status}
-                      </div>
-                    </div>
-                    <div className="mt-3 text-xs uppercase tracking-[0.18em] text-muted">
-                      {post.slug}
-                    </div>
-                    <div className="mt-4 flex items-center justify-between text-xs text-muted">
-                      <span>{post.readTime}</span>
-                      <span>{relativeTimeLabel(post.updatedAt)}</span>
-                    </div>
-                  </button>
-                ))}
-
-                {!filteredPosts.length ? (
-                  <div className="border border-dashed border-border bg-surface p-6 text-sm text-muted">
-                    No posts match the current search or filter.
-                  </div>
-                ) : null}
-              </div>
+              ) : null}
             </div>
           </div>
         </aside>
 
-        <section className="space-y-6">
+        <section className="min-w-0">
           {selectedPost ? (
-            <>
-              <div className="border border-border bg-background admin-spotlight">
-                <div className="flex flex-col gap-6 border-b border-border p-6 lg:flex-row lg:items-end lg:justify-between">
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      Editing
+            <div className="space-y-6">
+              <div className={`sticky top-20 z-30 p-4 sm:p-5 ${PANEL_CLASS}`}>
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h2 className="truncate text-xl font-semibold text-gray-800 md:text-2xl">
+                        {selectedPost.title}
+                      </h2>
+                      <StatusBadge status={selectedPost.status} />
                     </div>
-                    <div className="mt-3 text-3xl leading-tight md:text-4xl">
-                      {selectedPost.title}
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      <span>{selectedPost.slug}</span>
-                      <span className="h-1 w-1 self-center bg-foreground" />
-                      <span>Updated {formatDateLabel(selectedPost.updatedAt)}</span>
-                      <span className="h-1 w-1 self-center bg-foreground" />
-                      <span>{selectedPost.status}</span>
-                    </div>
+                    <p className="mt-2 text-sm text-gray-500">
+                      Last updated {formatDateLabel(selectedPost.updatedAt)}
+                    </p>
                   </div>
 
                   <div className="flex flex-wrap gap-3">
                     <button
                       type="button"
-                      onClick={duplicatePost}
-                      className="inline-flex items-center justify-center border border-foreground px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] hover:bg-foreground hover:text-background"
-                    >
-                      Duplicate
-                    </button>
-                    <button
-                      type="button"
                       onClick={saveDraft}
-                      className="inline-flex items-center justify-center border border-border bg-background px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-foreground hover:border-foreground"
+                      className={PRIMARY_BUTTON_CLASS}
                     >
-                      Save draft
+                      Save Draft
                     </button>
                     <button
                       type="button"
                       onClick={publishPost}
-                      className="inline-flex items-center justify-center bg-foreground px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-background hover:bg-foreground/90"
+                      className={PRIMARY_BUTTON_CLASS}
                     >
                       Publish
                     </button>
                   </div>
                 </div>
-
-                <div className="grid gap-6 p-6 xl:grid-cols-2">
-                  <label className="grid gap-2">
-                    <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      Article title
-                    </span>
-                    <input
-                      value={selectedPost.title}
-                      onChange={(event) => updateTitle(event.target.value)}
-                      className="border border-border bg-background px-4 py-3 text-sm"
-                    />
-                  </label>
-
-                  <div className="grid gap-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      Slug
-                    </div>
-                    <div className="flex gap-3">
-                      <input
-                        value={selectedPost.slug}
-                        onChange={(event) =>
-                          updateSimpleField("slug", slugify(event.target.value))
-                        }
-                        className="min-w-0 flex-1 border border-border bg-background px-4 py-3 text-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateSimpleField("slug", slugify(selectedPost.title))
-                        }
-                        className="border border-foreground px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] hover:bg-foreground hover:text-background"
-                      >
-                        Generate
-                      </button>
-                    </div>
-                  </div>
-                </div>
               </div>
 
-              <div className="grid gap-6 xl:grid-cols-2">
-                <div className="border border-border bg-background p-6">
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                    Article details
-                  </div>
-                  <div className="mt-6 grid gap-5">
-                    <label className="grid gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                        Category
-                      </span>
-                      <input
-                        value={selectedPost.category}
-                        onChange={(event) =>
-                          updateSimpleField("category", event.target.value)
-                        }
-                        className="border border-border bg-surface px-4 py-3 text-sm"
-                      />
-                    </label>
-
-                    <div className="grid gap-5 md:grid-cols-2">
-                      <label className="grid gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                          Read time
-                        </span>
+              <div className={`space-y-6 p-5 sm:p-6 lg:p-8 ${PANEL_CLASS}`}>
+                <div className={`grid gap-6 p-5 lg:p-6 ${SECTION_CLASS}`}>
+                  <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+                    <div className="space-y-6">
+                      <label className="block space-y-3">
+                        <span className={LABEL_CLASS}>Article Title</span>
                         <input
-                          value={selectedPost.readTime}
-                          onChange={(event) =>
-                            updateSimpleField("readTime", event.target.value)
-                          }
-                          className="border border-border bg-surface px-4 py-3 text-sm"
+                          value={selectedPost.title}
+                          onChange={(event) => updateTitle(event.target.value)}
+                          placeholder="Enter article title"
+                          className="w-full rounded-xl border border-gray-200 bg-white px-5 py-4 text-2xl font-semibold tracking-tight text-gray-800 outline-none transition-colors placeholder:text-gray-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-50 md:text-3xl"
                         />
                       </label>
 
-                      <label className="grid gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                          Author
-                        </span>
-                        <input
-                          value={selectedPost.author}
-                          onChange={(event) =>
-                            updateSimpleField("author", event.target.value)
-                          }
-                          className="border border-border bg-surface px-4 py-3 text-sm"
-                        />
-                      </label>
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                        <label className="block space-y-2">
+                          <span className={LABEL_CLASS}>Category</span>
+                          <select
+                            value={selectedPost.category}
+                            onChange={(event) =>
+                              updateSimpleField("category", event.target.value)
+                            }
+                            className={INPUT_CLASS}
+                          >
+                            {categoryOptions.map((category) => (
+                              <option key={category} value={category}>
+                                {category}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <div className="space-y-2">
+                          <span className={LABEL_CLASS}>Status</span>
+                          <div className="inline-flex rounded-xl border border-gray-200 bg-white p-1">
+                            {(["draft", "published"] as BlogStatus[]).map((status) => (
+                              <button
+                                key={status}
+                                type="button"
+                                onClick={() => updateSimpleField("status", status)}
+                                className={[
+                                  "rounded-lg px-4 py-2 text-sm font-semibold transition-colors",
+                                  selectedPost.status === status
+                                    ? "bg-emerald-600 text-white"
+                                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-800",
+                                ].join(" ")}
+                              >
+                                {status === "published" ? "Published" : "Draft"}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <label className="block space-y-2">
+                          <span className={LABEL_CLASS}>Published Date</span>
+                          <input
+                            type="date"
+                            value={selectedPost.publishedAt}
+                            onChange={(event) =>
+                              updateSimpleField("publishedAt", event.target.value)
+                            }
+                            className={INPUT_CLASS}
+                          />
+                        </label>
+                      </div>
                     </div>
 
-                    <div className="grid gap-5 md:grid-cols-2">
-                      <label className="grid gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                          Published date
-                        </span>
-                        <input
-                          type="date"
-                          value={selectedPost.publishedAt}
-                          onChange={(event) =>
-                            updateSimpleField("publishedAt", event.target.value)
-                          }
-                          className="border border-border bg-surface px-4 py-3 text-sm"
-                        />
-                      </label>
-
-                      <label className="grid gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                          Status
-                        </span>
-                        <select
-                          value={selectedPost.status}
-                          onChange={(event) =>
-                            updateSimpleField(
-                              "status",
-                              event.target.value as ManagedBlogPost["status"],
-                            )
-                          }
-                          className="border border-border bg-surface px-4 py-3 text-sm"
-                        >
-                          <option value="draft">Draft</option>
-                          <option value="published">Published</option>
-                        </select>
-                      </label>
+                    <div className={`p-5 ${SECTION_CLASS}`}>
+                      <p className={LABEL_CLASS}>Post Details</p>
+                      <dl className="mt-4 space-y-4 text-sm">
+                        <div className="flex items-center justify-between gap-4">
+                          <dt className="text-gray-500">Status</dt>
+                          <dd>
+                            <StatusBadge status={selectedPost.status} />
+                          </dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-4">
+                          <dt className="text-gray-500">Category</dt>
+                          <dd className="text-right font-medium text-gray-800">
+                            {selectedPost.category}
+                          </dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-4">
+                          <dt className="text-gray-500">Published</dt>
+                          <dd className="text-right font-medium text-gray-800">
+                            {formatDateLabel(selectedPost.publishedAt)}
+                          </dd>
+                        </div>
+                        <div className="flex items-center justify-between gap-4">
+                          <dt className="text-gray-500">Slug</dt>
+                          <dd className="max-w-[12rem] truncate text-right font-medium text-gray-800">
+                            /blog/{selectedPost.slug}
+                          </dd>
+                        </div>
+                      </dl>
                     </div>
-
-                    <label className="grid gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                        Card excerpt
-                      </span>
-                      <textarea
-                        value={selectedPost.excerpt}
-                        onChange={(event) =>
-                          updateSimpleField("excerpt", event.target.value)
-                        }
-                        rows={4}
-                        className="border border-border bg-surface px-4 py-3 text-sm"
-                      />
-                    </label>
-
-                    <label className="grid gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                        Article description
-                      </span>
-                      <textarea
-                        value={selectedPost.description}
-                        onChange={(event) =>
-                          updateSimpleField("description", event.target.value)
-                        }
-                        rows={5}
-                        className="border border-border bg-surface px-4 py-3 text-sm"
-                      />
-                    </label>
                   </div>
                 </div>
 
-                <div className="border border-border bg-background p-6">
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                    SEO & targeting
+                <div className={`p-5 sm:p-6 lg:p-6 ${SECTION_CLASS}`}>
+                  <div className="mb-5">
+                    <p className={LABEL_CLASS}>Body</p>
+                    <h3 className="mt-2 text-xl font-semibold tracking-tight text-gray-800">
+                      Rich text editor
+                    </h3>
                   </div>
-                  <div className="mt-6 grid gap-5">
-                    <label className="grid gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                        SEO title
-                      </span>
+
+                  <RichTextEditor
+                    key={selectedPost.id}
+                    value={selectedPost.bodyHtml}
+                    onChange={updateBodyHtml}
+                  />
+                </div>
+
+                <details className={`group ${SECTION_CLASS}`}>
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-5 sm:px-6 lg:px-6 [&::-webkit-details-marker]:hidden">
+                    <div>
+                      <p className={LABEL_CLASS}>SEO</p>
+                      <h3 className="mt-2 text-xl font-semibold tracking-tight text-gray-800">
+                        Search fields
+                      </h3>
+                    </div>
+                    <ChevronIcon className="h-5 w-5 text-gray-400 transition-transform group-open:rotate-180" />
+                  </summary>
+
+                  <div className="grid gap-4 border-t border-gray-200 px-5 py-5 sm:px-6 lg:grid-cols-2 lg:px-6">
+                    <label className="block space-y-2">
+                      <span className={LABEL_CLASS}>Meta Title</span>
                       <input
                         value={selectedPost.seoTitle}
                         onChange={(event) =>
                           updateSimpleField("seoTitle", event.target.value)
                         }
-                        className="border border-border bg-surface px-4 py-3 text-sm"
+                        className={INPUT_CLASS}
                       />
                     </label>
 
-                    <label className="grid gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                        Meta description
-                      </span>
+                    <label className="block space-y-2">
+                      <span className={LABEL_CLASS}>Slug</span>
+                      <input
+                        value={selectedPost.slug}
+                        onChange={(event) =>
+                          updateSimpleField("slug", slugify(event.target.value))
+                        }
+                        className={INPUT_CLASS}
+                      />
+                    </label>
+
+                    <label className="block space-y-2 lg:col-span-2">
+                      <span className={LABEL_CLASS}>Meta Description</span>
                       <textarea
                         value={selectedPost.seoDescription}
                         onChange={(event) =>
                           updateSimpleField("seoDescription", event.target.value)
                         }
                         rows={4}
-                        className="border border-border bg-surface px-4 py-3 text-sm"
+                        className={INPUT_CLASS}
                       />
                     </label>
 
-                    <label className="grid gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                        Keywords
-                      </span>
+                    <label className="block space-y-2 lg:col-span-2">
+                      <span className={LABEL_CLASS}>Keywords</span>
                       <textarea
                         value={listToLines(selectedPost.keywords)}
                         onChange={(event) =>
                           updateSimpleField("keywords", linesToList(event.target.value))
                         }
-                        rows={6}
-                        className="border border-border bg-surface px-4 py-3 text-sm"
-                      />
-                      <div className="text-xs text-muted">
-                        One phrase per line.
-                      </div>
-                    </label>
-
-                    <label className="grid gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                        Target locations
-                      </span>
-                      <textarea
-                        value={listToLines(selectedPost.targetLocations)}
-                        onChange={(event) =>
-                          updateSimpleField(
-                            "targetLocations",
-                            linesToList(event.target.value),
-                          )
-                        }
-                        rows={5}
-                        className="border border-border bg-surface px-4 py-3 text-sm"
-                      />
-                      <div className="text-xs text-muted">
-                        Use one location per line for local intent.
-                      </div>
-                    </label>
-
-                    <label className="grid gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                        Highlights
-                      </span>
-                      <textarea
-                        value={listToLines(selectedPost.highlights)}
-                        onChange={(event) =>
-                          updateSimpleField(
-                            "highlights",
-                            linesToList(event.target.value),
-                          )
-                        }
-                        rows={5}
-                        className="border border-border bg-surface px-4 py-3 text-sm"
+                        rows={4}
+                        placeholder="Add one keyword or phrase per line"
+                        className={INPUT_CLASS}
                       />
                     </label>
                   </div>
-                </div>
-              </div>
+                </details>
 
-              <div className="border border-border bg-background p-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      Article structure
+                <div className={`p-5 sm:p-6 lg:p-6 ${SECTION_CLASS}`}>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className={LABEL_CLASS}>FAQs</p>
+                      <h3 className="mt-2 text-xl font-semibold tracking-tight text-gray-800">
+                        Question and answer pairs
+                      </h3>
                     </div>
-                    <div className="mt-2 text-lg">
-                      Build the main body section by section.
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={addSection}
-                    className="border border-foreground px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] hover:bg-foreground hover:text-background"
-                  >
-                    Add section
-                  </button>
-                </div>
 
-                <div className="mt-6 grid gap-4">
-                  {selectedPost.sections.map((section) => (
-                    <div key={section.id} className="border border-border bg-surface p-5">
-                      <div className="flex items-start justify-between gap-4">
-                        <label className="grid flex-1 gap-2">
-                          <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                            Section title
-                          </span>
-                          <input
-                            value={section.title}
-                            onChange={(event) =>
-                              updateSection(section.id, "title", event.target.value)
-                            }
-                            className="border border-border bg-background px-4 py-3 text-sm"
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => removeSection(section.id)}
-                          disabled={selectedPost.sections.length === 1}
-                          className="border border-border px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted disabled:opacity-40"
-                        >
-                          Remove
-                        </button>
-                      </div>
-
-                      <label className="mt-4 grid gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                          Paragraphs
-                        </span>
-                        <textarea
-                          value={section.body.join("\n\n")}
-                          onChange={(event) =>
-                            updateSection(section.id, "body", event.target.value)
-                          }
-                          rows={8}
-                          className="border border-border bg-background px-4 py-3 text-sm"
-                        />
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="border border-border bg-background p-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      FAQs
-                    </div>
-                    <div className="mt-2 text-lg">
-                      Keep long-tail questions explicit and direct.
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={addFaq}
-                    className="border border-foreground px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] hover:bg-foreground hover:text-background"
-                  >
-                    Add FAQ
-                  </button>
-                </div>
-
-                <div className="mt-6 grid gap-4">
-                  {selectedPost.faq.map((item) => (
-                    <div key={item.id} className="border border-border bg-surface p-5">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="grid flex-1 gap-4">
-                          <label className="grid gap-2">
-                            <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                              Question
-                            </span>
-                            <input
-                              value={item.question}
-                              onChange={(event) =>
-                                updateFaq(item.id, "question", event.target.value)
-                              }
-                              className="border border-border bg-background px-4 py-3 text-sm"
-                            />
-                          </label>
-                          <label className="grid gap-2">
-                            <span className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                              Answer
-                            </span>
-                            <textarea
-                              value={item.answer}
-                              onChange={(event) =>
-                                updateFaq(item.id, "answer", event.target.value)
-                              }
-                              rows={4}
-                              className="border border-border bg-background px-4 py-3 text-sm"
-                            />
-                          </label>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removeFaq(item.id)}
-                          disabled={selectedPost.faq.length === 1}
-                          className="border border-border px-4 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted disabled:opacity-40"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="border border-dashed border-border bg-background p-10 text-sm text-muted">
-              No post selected yet.
-            </div>
-          )}
-        </section>
-
-        <aside className="space-y-6">
-          <div className="border border-border bg-background p-5">
-            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-              Tracking
-            </div>
-            {selectedPost ? (
-              <div className="mt-5 grid gap-4">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="border border-border bg-surface p-4">
-                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      Word count
-                    </div>
-                    <div className="mt-3 text-2xl leading-none">
-                      {getWordCount(selectedPost)}
-                    </div>
-                  </div>
-                  <div className="border border-border bg-surface p-4">
-                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      SEO score
-                    </div>
-                    <div className="mt-3 text-2xl leading-none">{seoScore}%</div>
-                  </div>
-                </div>
-
-                <div className="border border-border bg-surface p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                    Public path
-                  </div>
-                  <div className="mt-3 text-sm leading-6">
-                    <code>/blog/{selectedPost.slug}</code>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Link
-                      href={`/blog/${selectedPost.slug}`}
-                      className="inline-flex items-center justify-center border border-foreground px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] hover:bg-foreground hover:text-background"
-                    >
-                      Open route
-                    </Link>
                     <button
                       type="button"
-                      onClick={deletePost}
-                      disabled={store.posts.length === 1}
-                      className="inline-flex items-center justify-center border border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted disabled:opacity-40"
+                      onClick={addFaq}
+                      className={SECONDARY_BUTTON_CLASS}
                     >
-                      Delete
+                      Add FAQ
                     </button>
                   </div>
-                </div>
 
-                <div className="border border-border bg-surface p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                    Readiness checklist
-                  </div>
-                  <div className="mt-4 grid gap-3">
-                    {seoChecklist.map((item) => (
+                  <div className="mt-6 space-y-4">
+                    {selectedPost.faq.map((faq) => (
                       <div
-                        key={item.label}
-                        className="flex items-start gap-3 text-sm leading-6"
+                        key={faq.id}
+                        className="rounded-xl border border-gray-200 bg-white p-4 sm:p-5"
                       >
-                        <span
-                          className={[
-                            "mt-2 h-2 w-2 shrink-0",
-                            item.pass ? "bg-foreground" : "border border-border bg-background",
-                          ].join(" ")}
-                        />
-                        <span className={item.pass ? "text-foreground" : "text-muted"}>
-                          {item.label}
-                        </span>
+                        <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+                          <div className="grid flex-1 gap-4">
+                            <label className="block space-y-2">
+                              <span className={LABEL_CLASS}>Question</span>
+                              <input
+                                value={faq.question}
+                                onChange={(event) =>
+                                  updateFaq(faq.id, "question", event.target.value)
+                                }
+                                className={INPUT_CLASS}
+                              />
+                            </label>
+
+                            <label className="block space-y-2">
+                              <span className={LABEL_CLASS}>Answer</span>
+                              <textarea
+                                value={faq.answer}
+                                onChange={(event) =>
+                                  updateFaq(faq.id, "answer", event.target.value)
+                                }
+                                rows={4}
+                                className={INPUT_CLASS}
+                              />
+                            </label>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => removeFaq(faq.id)}
+                            className={DANGER_BUTTON_CLASS}
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
-
-                <div className="border border-border bg-surface p-4">
-                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                    Snapshot
-                  </div>
-                  <div className="mt-4 grid gap-3 text-sm text-muted">
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Created</span>
-                      <span>{formatDateTimeLabel(selectedPost.createdAt)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Published</span>
-                      <span>{formatDateLabel(selectedPost.publishedAt)}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Sections</span>
-                      <span>{selectedPost.sections.length}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span>FAQs</span>
-                      <span>{selectedPost.faq.length}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Locations</span>
-                      <span>{selectedPost.targetLocations.length}</span>
-                    </div>
-                  </div>
-                </div>
               </div>
-            ) : null}
-          </div>
-
-          <div className="border border-border bg-background">
-            <div className="flex items-center justify-between gap-3 border-b border-border p-5">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                  Activity log
-                </div>
-                <div className="mt-2 text-lg">Track manager actions.</div>
+            </div>
+          ) : (
+            <div className={`flex min-h-[60vh] items-center justify-center p-8 text-center ${PANEL_CLASS}`}>
+              <div className="max-w-md">
+                <h2 className="text-2xl font-semibold tracking-tight">
+                  No post selected
+                </h2>
+                <p className="mt-3 text-sm leading-7 text-gray-500">
+                  Create a new post to start writing, or choose an existing post
+                  from the sidebar.
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={resetWorkspace}
-                className="border border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted"
-              >
-                Reset
-              </button>
             </div>
-
-            <div className="grid gap-3 p-5">
-              {store.activities.map((activity) => (
-                <div key={activity.id} className="border border-border bg-surface p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      {activity.type}
-                    </div>
-                    <div className="text-xs text-muted">
-                      {relativeTimeLabel(activity.happenedAt)}
-                    </div>
-                  </div>
-                  <div className="mt-3 text-sm leading-6">{activity.title}</div>
-                  <div className="mt-2 text-xs leading-5 text-muted">
-                    {activity.summary}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </aside>
+          )}
+        </section>
       </main>
     </div>
   );

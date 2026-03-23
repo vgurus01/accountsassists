@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -27,10 +28,17 @@ export default function Header() {
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <Link
           href="/"
-          className="text-sm font-semibold uppercase tracking-[0.28em]"
+          className="inline-flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.28em]"
           aria-label="Accounts Assists home"
         >
-          Accounts Assists
+          <Image
+            src="/LogoAA.png"
+            alt="Accounts Assists logo"
+            width={28}
+            height={28}
+            className="rounded"
+          />
+          <span>Accounts Assists</span>
         </Link>
 
         <nav className="hidden items-center gap-8 md:flex">
