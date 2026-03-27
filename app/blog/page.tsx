@@ -2,11 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import Footer from "../sections/Footer";
 import Header from "../sections/Header";
-import {
-  BLOG_POSTS,
-  formatBlogDate,
-  getBlogPostPath,
-} from "../lib/blog";
+import { formatBlogDate, getBlogPostPath } from "../lib/blog";
+import { getPublishedBlogPosts } from "../lib/server/blog-store";
 import {
   absoluteUrl,
   buildPageMetadata,
@@ -34,9 +31,11 @@ export const metadata: Metadata = buildPageMetadata({
   classification: "Accounting & Tax Articles",
 });
 
-const FEATURED_POST = BLOG_POSTS[0];
+export const dynamic = "force-dynamic";
 
-export default function BlogPage() {
+export default async function BlogPage() {
+  const posts = await getPublishedBlogPosts();
+  const featuredPost = posts[0] ?? null;
   const siteUrl = getSiteUrl();
   const blogJsonLd = {
     "@context": "https://schema.org",
@@ -52,7 +51,7 @@ export default function BlogPage() {
     publisher: {
       "@id": `${siteUrl}/#accountingservice`,
     },
-    blogPost: BLOG_POSTS.map((post) => ({
+    blogPost: posts.map((post) => ({
       "@type": "BlogPosting",
       headline: post.title,
       description: post.description,
@@ -129,12 +128,14 @@ export default function BlogPage() {
               </p>
 
               <div className="mt-10 flex flex-col gap-4 sm:flex-row">
-                <Link
-                  href={getBlogPostPath(FEATURED_POST.slug)}
-                  className="inline-flex items-center justify-center bg-foreground px-8 py-4 text-xs font-semibold uppercase tracking-[0.22em] text-background transition-colors hover:bg-foreground/90"
-                >
-                  Read featured article
-                </Link>
+                {featuredPost ? (
+                  <Link
+                    href={getBlogPostPath(featuredPost.slug)}
+                    className="inline-flex items-center justify-center bg-foreground px-8 py-4 text-xs font-semibold uppercase tracking-[0.22em] text-background transition-colors hover:bg-foreground/90"
+                  >
+                    Read featured article
+                  </Link>
+                ) : null}
                 <Link
                   href="/#contact"
                   className="inline-flex items-center justify-center border border-foreground px-8 py-4 text-xs font-semibold uppercase tracking-[0.22em] text-foreground transition-colors hover:bg-foreground hover:text-background"
@@ -145,27 +146,44 @@ export default function BlogPage() {
             </div>
 
             <div className="border border-border bg-surface p-8">
-              <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                Featured now
-              </div>
-              <h2 className="mt-4 text-3xl leading-tight">
-                {FEATURED_POST.title}
-              </h2>
-              <p className="mt-4 text-sm leading-7 text-muted md:text-base">
-                {FEATURED_POST.description}
-              </p>
-
-              <div className="mt-8 grid gap-3">
-                {FEATURED_POST.highlights.map((item) => (
-                  <div
-                    key={item}
-                    className="flex items-start gap-3 border border-border bg-background p-4 text-sm leading-6"
-                  >
-                    <span className="mt-2 h-1.5 w-1.5 shrink-0 bg-foreground" />
-                    <span>{item}</span>
+              {featuredPost ? (
+                <>
+                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
+                    Featured now
                   </div>
-                ))}
-              </div>
+                  <h2 className="mt-4 text-3xl leading-tight">
+                    {featuredPost.title}
+                  </h2>
+                  <p className="mt-4 text-sm leading-7 text-muted md:text-base">
+                    {featuredPost.description}
+                  </p>
+
+                  <div className="mt-8 grid gap-3">
+                    {featuredPost.highlights.map((item) => (
+                      <div
+                        key={item}
+                        className="flex items-start gap-3 border border-border bg-background p-4 text-sm leading-6"
+                      >
+                        <span className="mt-2 h-1.5 w-1.5 shrink-0 bg-foreground" />
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
+                    Featured now
+                  </div>
+                  <h2 className="mt-4 text-3xl leading-tight">
+                    Published articles will appear here.
+                  </h2>
+                  <p className="mt-4 text-sm leading-7 text-muted md:text-base">
+                    Create and publish a post from the admin dashboard to surface
+                    it on the public blog.
+                  </p>
+                </>
+              )}
             </div>
           </div>
         </section>
@@ -189,55 +207,63 @@ export default function BlogPage() {
             </div>
 
             <div className="mt-12">
-              {BLOG_POSTS.map((post) => (
-                <article
-                  key={post.slug}
-                  className="grid overflow-hidden border border-border bg-background md:grid-cols-[1.1fr_0.9fr]"
-                >
-                  <div className="p-8 md:p-10">
-                    <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      <span>{post.category}</span>
-                      <span className="h-1 w-1 bg-foreground" />
-                      <span>{formatBlogDate(post.publishedAt)}</span>
-                      <span className="h-1 w-1 bg-foreground" />
-                      <span>{post.readTime}</span>
-                    </div>
+              {posts.length ? (
+                posts.map((post) => (
+                  <article
+                    key={post.slug}
+                    className="grid overflow-hidden border border-border bg-background md:grid-cols-[1.1fr_0.9fr]"
+                  >
+                    <div className="p-8 md:p-10">
+                      <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted">
+                        <span>{post.category}</span>
+                        <span className="h-1 w-1 bg-foreground" />
+                        <span>{formatBlogDate(post.publishedAt)}</span>
+                        <span className="h-1 w-1 bg-foreground" />
+                        <span>{post.readTime}</span>
+                      </div>
 
-                    <h3 className="mt-5 text-3xl leading-tight">{post.title}</h3>
-                    <p className="mt-5 max-w-2xl text-sm leading-7 text-muted md:text-base">
-                      {post.excerpt}
-                    </p>
+                      <h3 className="mt-5 text-3xl leading-tight">{post.title}</h3>
+                      <p className="mt-5 max-w-2xl text-sm leading-7 text-muted md:text-base">
+                        {post.excerpt}
+                      </p>
 
-                    <div className="mt-8">
-                      <Link
-                        href={getBlogPostPath(post.slug)}
-                        className="inline-flex items-center justify-center bg-foreground px-6 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-background transition-colors hover:bg-foreground/90"
-                      >
-                        Read article
-                      </Link>
-                    </div>
-                  </div>
-
-                  <div className="border-t border-border bg-surface p-8 md:border-l md:border-t-0 md:p-10">
-                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-                      What it covers
-                    </div>
-                    <div className="mt-5 grid gap-4">
-                      {post.sections.slice(0, 3).map((section) => (
-                        <div
-                          key={section.title}
-                          className="border border-border bg-background p-4"
+                      <div className="mt-8">
+                        <Link
+                          href={getBlogPostPath(post.slug)}
+                          className="inline-flex items-center justify-center bg-foreground px-6 py-3 text-xs font-semibold uppercase tracking-[0.22em] text-background transition-colors hover:bg-foreground/90"
                         >
-                          <h4 className="text-lg leading-snug">{section.title}</h4>
-                          <p className="mt-3 text-sm leading-6 text-muted">
-                            {section.body[0]}
-                          </p>
-                        </div>
-                      ))}
+                          Read article
+                        </Link>
+                      </div>
                     </div>
-                  </div>
-                </article>
-              ))}
+
+                    <div className="border-t border-border bg-surface p-8 md:border-l md:border-t-0 md:p-10">
+                      <div className="text-xs font-semibold uppercase tracking-[0.22em] text-muted">
+                        What it covers
+                      </div>
+                      <div className="mt-5 grid gap-4">
+                        {post.sections.slice(0, 3).map((section) => (
+                          <div
+                            key={section.title}
+                            className="border border-border bg-background p-4"
+                          >
+                            <h4 className="text-lg leading-snug">
+                              {section.title}
+                            </h4>
+                            <p className="mt-3 text-sm leading-6 text-muted">
+                              {section.body[0]}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <div className="border border-dashed border-border bg-background p-8 text-sm leading-7 text-muted">
+                  No published articles are live yet.
+                </div>
+              )}
             </div>
           </div>
         </section>

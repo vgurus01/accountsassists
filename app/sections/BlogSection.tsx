@@ -1,11 +1,6 @@
 import Link from "next/link";
-import {
-  BLOG_POSTS,
-  formatBlogDate,
-  getBlogPostPath,
-} from "../lib/blog";
-
-const FEATURED_POST = BLOG_POSTS[0];
+import { formatBlogDate, getBlogPostPath } from "../lib/blog";
+import { getPublishedBlogPosts } from "../lib/server/blog-store";
 
 const SEARCH_TOPICS = [
   "Self assessment guides",
@@ -13,7 +8,14 @@ const SEARCH_TOPICS = [
   "HMRC deadline prep",
 ];
 
-export default function BlogSection() {
+export default async function BlogSection() {
+  const posts = await getPublishedBlogPosts();
+  const featuredPost = posts[0];
+
+  if (!featuredPost) {
+    return null;
+  }
+
   return (
     <section className="border-b border-border bg-surface">
       <div className="mx-auto grid max-w-6xl gap-10 px-6 py-20 md:grid-cols-[1.05fr_0.95fr] md:py-28">
@@ -52,7 +54,7 @@ export default function BlogSection() {
                 Visit the blog
               </Link>
               <Link
-                href={getBlogPostPath(FEATURED_POST.slug)}
+                href={getBlogPostPath(featuredPost.slug)}
                 className="inline-flex items-center justify-center border border-foreground px-8 py-4 text-xs font-semibold uppercase tracking-[0.22em] text-foreground transition-colors hover:bg-foreground hover:text-background"
               >
                 Read the featured post
@@ -64,23 +66,23 @@ export default function BlogSection() {
         <article className="border border-border bg-background">
           <div className="border-b border-border p-8">
             <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase tracking-[0.22em] text-muted">
-              <span>{FEATURED_POST.category}</span>
+              <span>{featuredPost.category}</span>
               <span className="h-1 w-1 bg-foreground" />
-              <span>{formatBlogDate(FEATURED_POST.publishedAt)}</span>
+              <span>{formatBlogDate(featuredPost.publishedAt)}</span>
               <span className="h-1 w-1 bg-foreground" />
-              <span>{FEATURED_POST.readTime}</span>
+              <span>{featuredPost.readTime}</span>
             </div>
 
             <h3 className="mt-5 text-3xl leading-tight">
-              {FEATURED_POST.title}
+              {featuredPost.title}
             </h3>
             <p className="mt-5 text-sm leading-7 text-muted md:text-base">
-              {FEATURED_POST.excerpt}
+              {featuredPost.excerpt}
             </p>
           </div>
 
           <div className="grid gap-4 p-8">
-            {FEATURED_POST.highlights.map((highlight) => (
+            {featuredPost.highlights.map((highlight) => (
               <div
                 key={highlight}
                 className="flex items-start gap-4 border border-border bg-surface p-4 text-sm leading-6 text-muted"
@@ -93,7 +95,7 @@ export default function BlogSection() {
 
           <div className="border-t border-border px-8 py-6">
             <Link
-              href={getBlogPostPath(FEATURED_POST.slug)}
+              href={getBlogPostPath(featuredPost.slug)}
               className="inline-flex items-center text-xs font-semibold uppercase tracking-[0.22em] text-foreground"
             >
               Open article

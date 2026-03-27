@@ -47,31 +47,6 @@ const DANGER_BUTTON_CLASS =
 const ICON_DANGER_BUTTON_CLASS =
   "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-red-200 bg-white text-red-600 transition-colors hover:bg-red-50 focus:outline-none focus:ring-4 focus:ring-red-100";
 
-function loadAdminStore() {
-  if (typeof window === "undefined") return getSeedAdminStore();
-
-  for (const key of [ADMIN_BLOG_STORAGE_KEY, LEGACY_ADMIN_BLOG_STORAGE_KEY]) {
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (!raw) continue;
-
-      const parsed = JSON.parse(raw);
-      const hydrated = hydrateAdminStore(parsed);
-      if (hydrated) return hydrated;
-    } catch {
-      continue;
-    }
-  }
-
-  return getSeedAdminStore();
-}
-
-function saveAdminStore(store: BlogAdminStore) {
-  if (typeof window === "undefined") return;
-
-  window.localStorage.setItem(ADMIN_BLOG_STORAGE_KEY, JSON.stringify(store));
-}
-
 function formatDateLabel(value: string) {
   const date = new Date(value);
 
@@ -465,15 +440,185 @@ function RichTextEditor({ value, onChange }: RichTextEditorProps) {
   );
 }
 
+type LocalStoreState = {
+  store: BlogAdminStore;
+  source: "local" | "seed";
+};
+
+type RemoteStoreState = {
+  store: BlogAdminStore;
+  source: "file" | "seed";
+};
+
+function serializeStore(store: BlogAdminStore) {
+  return JSON.stringify(store);
+}
+
+function loadLocalAdminStore(): LocalStoreState {
+  if (typeof window === "undefined") {
+    return {
+      store: getSeedAdminStore(),
+      source: "seed",
+    };
+  }
+
+  for (const key of [ADMIN_BLOG_STORAGE_KEY, LEGACY_ADMIN_BLOG_STORAGE_KEY]) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) continue;
+
+      const parsed = JSON.parse(raw);
+      const hydrated = hydrateAdminStore(parsed);
+
+      if (hydrated) {
+        return {
+          store: hydrated,
+          source: "local",
+        };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return {
+    store: getSeedAdminStore(),
+    source: "seed",
+  };
+}
+
+function saveLocalAdminStore(store: BlogAdminStore) {
+  if (typeof window === "undefined") return;
+
+  window.localStorage.setItem(ADMIN_BLOG_STORAGE_KEY, JSON.stringify(store));
+}
+
+async function readStoreResponse(response: Response) {
+  const payload = (await response.json()) as
+    | RemoteStoreState
+    | { error?: string };
+
+  if (!response.ok) {
+    throw new Error(
+      "error" in payload && payload.error
+        ? payload.error
+        : "Unable to sync blog posts.",
+    );
+  }
+
+  return payload as RemoteStoreState;
+}
+
+async function fetchRemoteAdminStore() {
+  const response = await fetch("/api/admin/posts", {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+
+  return readStoreResponse(response);
+}
+
+async function saveRemoteAdminStore(store: BlogAdminStore) {
+  const response = await fetch("/api/admin/posts", {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    credentials: "same-origin",
+    body: JSON.stringify(store),
+  });
+
+  return readStoreResponse(response);
+}
+
 export default function AdminDashboard() {
-  const [store, setStore] = useState<BlogAdminStore>(loadAdminStore);
+  const [initialLocalState] = useState<LocalStoreState>(loadLocalAdminStore);
+  const [store, setStore] = useState<BlogAdminStore>(initialLocalState.store);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [isRemoteStoreReady, setIsRemoteStoreReady] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<
+    "loading" | "saving" | "saved" | "error"
+  >("loading");
   const deferredSearch = useDeferredValue(search);
+  const lastSyncedStoreRef = useRef("");
 
   useEffect(() => {
-    saveAdminStore(store);
+    saveLocalAdminStore(store);
   }, [store]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function syncInitialStore() {
+      try {
+        const remoteStore = await fetchRemoteAdminStore();
+        if (cancelled) return;
+
+        if (
+          remoteStore.source === "seed" &&
+          initialLocalState.source === "local"
+        ) {
+          const migratedStore = await saveRemoteAdminStore(initialLocalState.store);
+          if (cancelled) return;
+
+          lastSyncedStoreRef.current = serializeStore(migratedStore.store);
+          setStore(migratedStore.store);
+        } else {
+          lastSyncedStoreRef.current = serializeStore(remoteStore.store);
+          setStore(remoteStore.store);
+        }
+
+        setSyncStatus("saved");
+      } catch {
+        if (cancelled) return;
+        setSyncStatus("error");
+      } finally {
+        if (!cancelled) {
+          setIsRemoteStoreReady(true);
+        }
+      }
+    }
+
+    void syncInitialStore();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialLocalState]);
+
+  useEffect(() => {
+    if (!isRemoteStoreReady) return;
+
+    const serializedStore = serializeStore(store);
+    if (serializedStore === lastSyncedStoreRef.current) return;
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        setSyncStatus("saving");
+
+        try {
+          const remoteStore = await saveRemoteAdminStore(store);
+          if (cancelled) return;
+
+          lastSyncedStoreRef.current = serializeStore(remoteStore.store);
+          setStore((current) =>
+            serializeStore(current) === serializedStore ? remoteStore.store : current,
+          );
+          setSyncStatus("saved");
+        } catch {
+          if (cancelled) return;
+          setSyncStatus("error");
+        }
+      })();
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [isRemoteStoreReady, store]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -487,7 +632,7 @@ export default function AdminDashboard() {
         return;
       }
 
-      setStore(loadAdminStore());
+      setStore(loadLocalAdminStore().store);
     };
 
     window.addEventListener("storage", onStorage);
@@ -695,6 +840,15 @@ export default function AdminDashboard() {
     }
   }
 
+  const syncMessage =
+    syncStatus === "loading"
+      ? "Loading stored posts..."
+      : syncStatus === "saving"
+        ? "Syncing changes to the live site..."
+        : syncStatus === "error"
+          ? "Sync failed. Refresh and sign in again if needed."
+          : "Changes synced to the live site.";
+
   return (
     <div className="min-h-screen bg-white text-gray-800">
       <header className="sticky top-0 z-40 border-b border-gray-200 bg-white">
@@ -767,6 +921,14 @@ export default function AdminDashboard() {
                     </div>
                     <p className="mt-2 text-sm text-gray-500">
                       Last updated {formatDateLabel(selectedPost.updatedAt)}
+                    </p>
+                    <p
+                      className={[
+                        "mt-1 text-sm",
+                        syncStatus === "error" ? "text-red-600" : "text-gray-500",
+                      ].join(" ")}
+                    >
+                      {syncMessage}
                     </p>
                   </div>
 

@@ -24,6 +24,8 @@ const HOME_TITLE =
 const HOME_DESCRIPTION =
   "Accountants in Watford serving Bushey, Croxley Green, Rickmansworth, Borehamwood, St Albans, Wembley, Harrow, Stanmore, Edgware, Kenton, Kingsbury, and Alperton. Get expert help with self assessment, taxi driver tax returns, bookkeeping, VAT, payroll, and company tax.";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = buildPageMetadata({
   title: HOME_TITLE,
   description: HOME_DESCRIPTION,

@@ -4,12 +4,13 @@ import { notFound } from "next/navigation";
 import Footer from "../../sections/Footer";
 import Header from "../../sections/Header";
 import {
-  BLOG_POSTS,
   formatBlogDate,
   getAbsoluteBlogPostUrl,
-  getBlogPost,
   getBlogPostPath,
 } from "../../lib/blog";
+import {
+  getPublishedBlogPost,
+} from "../../lib/server/blog-store";
 import {
   absoluteUrl,
   buildPageMetadata,
@@ -20,15 +21,13 @@ type BlogPostPageProps = {
   params: Promise<{ slug: string }>;
 };
 
-export function generateStaticParams() {
-  return BLOG_POSTS.map((post) => ({ slug: post.slug }));
-}
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({
   params,
 }: BlogPostPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const post = getBlogPost(slug);
+  const post = await getPublishedBlogPost(slug);
 
   if (!post) {
     return {
@@ -53,7 +52,7 @@ export async function generateMetadata({
 
 export default async function BlogPostPage({ params }: BlogPostPageProps) {
   const { slug } = await params;
-  const post = getBlogPost(slug);
+  const post = await getPublishedBlogPost(slug);
 
   if (!post) {
     notFound();
