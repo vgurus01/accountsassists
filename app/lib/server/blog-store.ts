@@ -2,7 +2,6 @@ import "server-only";
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { unstable_noStore as noStore } from "next/cache";
 import {
   getSeedAdminStore,
   hydrateAdminStore,
@@ -11,9 +10,42 @@ import {
 } from "../admin-blog";
 import type { BlogPost } from "../blog";
 
-const BLOG_STORE_FILE = path.join(process.cwd(), "data", "admin-blog-store.json");
+const DEFAULT_BLOG_STORE_FILE = path.join(
+  process.cwd(),
+  "data",
+  "admin-blog-store.json",
+);
+const TEMP_BLOG_STORE_FILE = path.join(
+  "/tmp",
+  "accountsassists-admin-blog-store.json",
+);
 
 export type AdminBlogStoreSource = "file" | "seed";
+
+function uniquePaths(paths: string[]) {
+  return Array.from(new Set(paths.filter(Boolean)));
+}
+
+function getBlogStoreFiles() {
+  return uniquePaths([
+    process.env.BLOG_STORE_FILE_PATH?.trim() ?? "",
+    DEFAULT_BLOG_STORE_FILE,
+    TEMP_BLOG_STORE_FILE,
+  ]);
+}
+
+function getPersistenceErrorMessage(error: unknown) {
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? String(error.code)
+      : "";
+
+  if (code === "EROFS" || code === "EPERM" || code === "EACCES") {
+    return "This host cannot write blog changes to the current storage path.";
+  }
+
+  return "Unable to save blog posts to disk.";
+}
 
 function toTimestamp(value: string) {
   const timestamp = new Date(value).getTime();
@@ -38,21 +70,27 @@ function toPublicPost(post: ManagedBlogPost): BlogPost {
 }
 
 async function readPersistedStore() {
-  try {
-    const raw = await readFile(BLOG_STORE_FILE, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    return hydrateAdminStore(parsed);
-  } catch {
-    return null;
+  for (const file of getBlogStoreFiles()) {
+    try {
+      const raw = await readFile(file, "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      const store = hydrateAdminStore(parsed);
+
+      if (store) {
+        return store;
+      }
+    } catch {
+      continue;
+    }
   }
+
+  return null;
 }
 
 export async function getAdminBlogStore(): Promise<{
   store: BlogAdminStore;
   source: AdminBlogStoreSource;
 }> {
-  noStore();
-
   const persistedStore = await readPersistedStore();
 
   if (persistedStore) {
@@ -69,10 +107,19 @@ export async function getAdminBlogStore(): Promise<{
 }
 
 export async function saveAdminBlogStore(store: BlogAdminStore) {
-  await mkdir(path.dirname(BLOG_STORE_FILE), { recursive: true });
-  await writeFile(BLOG_STORE_FILE, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  let lastError: unknown = null;
 
-  return store;
+  for (const file of getBlogStoreFiles()) {
+    try {
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+      return store;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(getPersistenceErrorMessage(lastError));
 }
 
 export async function getPublishedBlogPosts() {

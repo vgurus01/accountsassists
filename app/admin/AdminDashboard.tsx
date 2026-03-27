@@ -537,6 +537,7 @@ export default function AdminDashboard() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isRemoteStoreReady, setIsRemoteStoreReady] = useState(false);
+  const [syncErrorMessage, setSyncErrorMessage] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<
     "loading" | "saving" | "saved" | "error"
   >("loading");
@@ -570,8 +571,12 @@ export default function AdminDashboard() {
         }
 
         setSyncStatus("saved");
-      } catch {
+        setSyncErrorMessage(null);
+      } catch (error) {
         if (cancelled) return;
+        setSyncErrorMessage(
+          error instanceof Error ? error.message : "Unable to load blog posts.",
+        );
         setSyncStatus("error");
       } finally {
         if (!cancelled) {
@@ -606,9 +611,13 @@ export default function AdminDashboard() {
           setStore((current) =>
             serializeStore(current) === serializedStore ? remoteStore.store : current,
           );
+          setSyncErrorMessage(null);
           setSyncStatus("saved");
-        } catch {
+        } catch (error) {
           if (cancelled) return;
+          setSyncErrorMessage(
+            error instanceof Error ? error.message : "Unable to save blog posts.",
+          );
           setSyncStatus("error");
         }
       })();
@@ -846,7 +855,7 @@ export default function AdminDashboard() {
       : syncStatus === "saving"
         ? "Syncing changes to the live site..."
         : syncStatus === "error"
-          ? "Sync failed. Refresh and sign in again if needed."
+          ? syncErrorMessage ?? "Sync failed. Refresh and sign in again if needed."
           : "Changes synced to the live site.";
 
   return (

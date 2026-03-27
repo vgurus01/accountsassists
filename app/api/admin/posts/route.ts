@@ -34,7 +34,19 @@ export async function GET() {
     return jsonResponse({ error: "Unauthorized." }, 401);
   }
 
-  return jsonResponse(await getAdminBlogStore());
+  try {
+    return jsonResponse(await getAdminBlogStore());
+  } catch (error) {
+    return jsonResponse(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to load blog posts.",
+      },
+      500,
+    );
+  }
 }
 
 export async function PUT(request: NextRequest) {
@@ -56,7 +68,19 @@ export async function PUT(request: NextRequest) {
     return jsonResponse({ error: "Invalid blog store payload." }, 400);
   }
 
-  await saveAdminBlogStore(store);
+  try {
+    await saveAdminBlogStore(store);
+  } catch (error) {
+    return jsonResponse(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to save blog posts.",
+      },
+      500,
+    );
+  }
 
   return jsonResponse({
     store,
