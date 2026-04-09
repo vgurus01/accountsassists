@@ -53,26 +53,38 @@ function hasBlobToken() {
 // ─── Vercel Blob layer ────────────────────────────────────────────────────────
 
 async function readBlobStore(): Promise<BlogAdminStore | null> {
-  const { put, head, BlobNotFoundError } = await import("@vercel/blob");
+  const { get, BlobNotFoundError } = await import("@vercel/blob");
 
-  // head() returns blob metadata if the file exists, throws BlobNotFoundError otherwise
-  let blobUrl: string;
+  const token = process.env.BLOB_READ_WRITE_TOKEN!;
+
+  let result: Awaited<ReturnType<typeof get>>;
   try {
-    const meta = await head(BLOB_PATHNAME, {
-      token: process.env.BLOB_READ_WRITE_TOKEN,
-    });
-    blobUrl = meta.url;
+    result = await get(BLOB_PATHNAME, { access: "private", token });
   } catch (err) {
     if (err instanceof BlobNotFoundError) return null;
     throw err;
   }
 
-  // Fetch the actual JSON content via the blob's public URL
-  const response = await fetch(blobUrl, { cache: "no-store" });
-  if (!response.ok) return null;
+  // get() returns null on 404
+  if (!result || result.statusCode === 304) return null;
 
-  const raw = await response.text();
+  // Read the content from the ReadableStream
   try {
+    const reader = result.stream.getReader();
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+    const raw = new TextDecoder().decode(
+      chunks.reduce((acc, chunk) => {
+        const merged = new Uint8Array(acc.length + chunk.length);
+        merged.set(acc);
+        merged.set(chunk, acc.length);
+        return merged;
+      }, new Uint8Array(0)),
+    );
     return hydrateAdminStore(JSON.parse(raw));
   } catch {
     return null;
@@ -86,6 +98,7 @@ async function writeBlobStore(store: BlogAdminStore): Promise<void> {
     access: "private",
     contentType: "application/json",
     addRandomSuffix: false,
+    allowOverwrite: true,
     token: process.env.BLOB_READ_WRITE_TOKEN,
   });
 }
