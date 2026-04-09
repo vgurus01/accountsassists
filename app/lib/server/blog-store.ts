@@ -83,7 +83,7 @@ async function writeBlobStore(store: BlogAdminStore): Promise<void> {
   const { put } = await import("@vercel/blob");
 
   await put(BLOB_PATHNAME, JSON.stringify(store, null, 2), {
-    access: "public",
+    access: "private",
     contentType: "application/json",
     addRandomSuffix: false,
     token: process.env.BLOB_READ_WRITE_TOKEN,
