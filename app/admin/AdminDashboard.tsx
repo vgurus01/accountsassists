@@ -2,6 +2,7 @@
 
 import {
   startTransition,
+  useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -47,13 +48,17 @@ const DANGER_BUTTON_CLASS =
 const ICON_DANGER_BUTTON_CLASS =
   "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-red-200 bg-white text-red-600 transition-colors hover:bg-red-50 focus:outline-none focus:ring-4 focus:ring-red-100";
 
+type StatusFilter = "all" | "published" | "draft";
+
+type Toast = {
+  id: number;
+  message: string;
+  type: "success" | "error";
+};
+
 function formatDateLabel(value: string) {
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "No date";
-  }
-
+  if (Number.isNaN(date.getTime())) return "No date";
   return new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
     month: "short",
@@ -84,6 +89,16 @@ function isEditorHtmlEmpty(value: string) {
     .trim();
 }
 
+function extractBodyPreview(bodyHtml: string): string {
+  if (!bodyHtml) return "";
+  const text = bodyHtml
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 80 ? text.slice(0, 80) + "…" : text;
+}
+
 function bodyHtmlToSections(
   value: string,
   slug: string,
@@ -109,20 +124,14 @@ function bodyHtmlToSections(
         body: [],
       };
     }
-
     return currentSection;
   };
 
   const commitSection = () => {
     if (!currentSection) return;
-
     const body = currentSection.body.map(normalizeWhitespace).filter(Boolean);
     const title = normalizeWhitespace(currentSection.title) || "Main content";
-
-    if (body.length || title) {
-      sections.push({ title, body });
-    }
-
+    if (body.length || title) sections.push({ title, body });
     currentSection = null;
   };
 
@@ -138,13 +147,8 @@ function bodyHtmlToSections(
         addParagraph(node.textContent ?? "");
         continue;
       }
-
-      if (!(node instanceof HTMLElement)) {
-        continue;
-      }
-
+      if (!(node instanceof HTMLElement)) continue;
       const tag = node.tagName.toUpperCase();
-
       if (/^H[1-6]$/.test(tag)) {
         commitSection();
         currentSection = {
@@ -153,34 +157,24 @@ function bodyHtmlToSections(
         };
         continue;
       }
-
       if (tag === "UL" || tag === "OL") {
         for (const item of Array.from(node.children)) {
           addParagraph(`• ${item.textContent ?? ""}`);
         }
         continue;
       }
-
       if (tag === "P" || tag === "BLOCKQUOTE" || tag === "LI") {
         addParagraph(node.textContent ?? "");
         continue;
       }
-
-      if (tag === "BR") {
-        continue;
-      }
-
+      if (tag === "BR") continue;
       const hasStructuredChildren = Array.from(node.children).some((child) =>
-        /^(H[1-6]|UL|OL|P|DIV|BLOCKQUOTE|SECTION|ARTICLE)$/.test(
-          child.tagName.toUpperCase(),
-        ),
+        /^(H[1-6]|UL|OL|P|DIV|BLOCKQUOTE|SECTION|ARTICLE)$/.test(child.tagName.toUpperCase()),
       );
-
       if (hasStructuredChildren) {
         visitNodes(Array.from(node.childNodes));
         continue;
       }
-
       addParagraph(node.textContent ?? "");
     }
   };
@@ -189,13 +183,7 @@ function bodyHtmlToSections(
   commitSection();
 
   if (!sections.length) {
-    return [
-      {
-        id: `${slug}-section-1`,
-        title: "Main content",
-        body: [],
-      },
-    ];
+    return [{ id: `${slug}-section-1`, title: "Main content", body: [] }];
   }
 
   return sections.map((section, index) => ({
@@ -205,16 +193,11 @@ function bodyHtmlToSections(
   }));
 }
 
+// ─── Icons ───────────────────────────────────────────────────────────────────
+
 function SearchIcon({ className }: { className?: string }) {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      className={className}
-    >
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={className}>
       <circle cx="11" cy="11" r="7" />
       <path d="m20 20-3.5-3.5" strokeLinecap="round" />
     </svg>
@@ -223,14 +206,7 @@ function SearchIcon({ className }: { className?: string }) {
 
 function TrashIcon({ className }: { className?: string }) {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      className={className}
-    >
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={className}>
       <path d="M4 7h16" strokeLinecap="round" />
       <path d="M10 3h4" strokeLinecap="round" />
       <path d="M6 7l1 13h10l1-13" strokeLinecap="round" strokeLinejoin="round" />
@@ -242,18 +218,80 @@ function TrashIcon({ className }: { className?: string }) {
 
 function ChevronIcon({ className }: { className?: string }) {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      className={className}
-    >
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className={className}>
       <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
+
+// ─── Toast ───────────────────────────────────────────────────────────────────
+
+function ToastContainer({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
+  return (
+    <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          className={[
+            "flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold shadow-lg pointer-events-auto transition-all",
+            toast.type === "success"
+              ? "bg-emerald-600 text-white"
+              : "bg-red-600 text-white",
+          ].join(" ")}
+        >
+          <span>{toast.message}</span>
+          <button
+            type="button"
+            onClick={() => onDismiss(toast.id)}
+            className="ml-2 opacity-70 hover:opacity-100 text-white font-bold text-base leading-none"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Delete Confirmation Modal ────────────────────────────────────────────────
+
+function DeleteConfirmModal({
+  postTitle,
+  onConfirm,
+  onCancel,
+}: {
+  postTitle: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-semibold text-gray-900">Delete post?</h2>
+        <p className="mt-2 text-sm text-gray-600">
+          Are you sure you want to delete{" "}
+          <span className="font-semibold text-gray-900">&ldquo;{postTitle}&rdquo;</span>?
+          This cannot be undone.
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" onClick={onCancel} className={SECONDARY_BUTTON_CLASS}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-700 focus:outline-none focus:ring-4 focus:ring-red-100"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── StatusBadge ─────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: BlogStatus }) {
   return (
@@ -270,6 +308,8 @@ function StatusBadge({ status }: { status: BlogStatus }) {
   );
 }
 
+// ─── PostCard ─────────────────────────────────────────────────────────────────
+
 type PostCardProps = {
   post: ManagedBlogPost;
   isActive: boolean;
@@ -278,11 +318,10 @@ type PostCardProps = {
 };
 
 function PostCard({ post, isActive, onSelect, onDelete }: PostCardProps) {
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.target !== event.currentTarget) {
-      return;
-    }
+  const preview = extractBodyPreview(post.bodyHtml);
 
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       onSelect();
@@ -304,20 +343,19 @@ function PostCard({ post, isActive, onSelect, onDelete }: PostCardProps) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-gray-800">
-            {post.title}
-          </p>
+          <p className="truncate text-sm font-semibold text-gray-800">{post.title}</p>
+          {preview && (
+            <p className="mt-1 line-clamp-2 text-xs text-gray-400 leading-relaxed">{preview}</p>
+          )}
         </div>
         <StatusBadge status={post.status} />
       </div>
 
-      <div className="mt-4 flex items-center justify-between gap-3">
+      <div className="mt-3 flex items-center justify-between gap-3">
         <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600">
           {post.category}
         </span>
-        <span className="text-xs text-gray-500">
-          {formatDateLabel(post.publishedAt)}
-        </span>
+        <span className="text-xs text-gray-500">{formatDateLabel(post.publishedAt)}</span>
       </div>
 
       <div className="mt-3 flex justify-end">
@@ -336,6 +374,8 @@ function PostCard({ post, isActive, onSelect, onDelete }: PostCardProps) {
     </article>
   );
 }
+
+// ─── RichTextEditor ───────────────────────────────────────────────────────────
 
 type ToolbarButtonProps = {
   label: string;
@@ -368,7 +408,6 @@ function RichTextEditor({ value, onChange }: RichTextEditorProps) {
   useEffect(() => {
     if (!editorRef.current) return;
     if (editorRef.current.innerHTML === value) return;
-
     editorRef.current.innerHTML = value;
   }, [value]);
 
@@ -387,31 +426,11 @@ function RichTextEditor({ value, onChange }: RichTextEditorProps) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
-        <ToolbarButton
-          label="B"
-          title="Bold"
-          onClick={() => runCommand("bold")}
-        />
-        <ToolbarButton
-          label="I"
-          title="Italic"
-          onClick={() => runCommand("italic")}
-        />
-        <ToolbarButton
-          label="H2"
-          title="Heading 2"
-          onClick={() => runCommand("formatBlock", "H2")}
-        />
-        <ToolbarButton
-          label="H3"
-          title="Heading 3"
-          onClick={() => runCommand("formatBlock", "H3")}
-        />
-        <ToolbarButton
-          label="• List"
-          title="Bulleted list"
-          onClick={() => runCommand("insertUnorderedList")}
-        />
+        <ToolbarButton label="B" title="Bold" onClick={() => runCommand("bold")} />
+        <ToolbarButton label="I" title="Italic" onClick={() => runCommand("italic")} />
+        <ToolbarButton label="H2" title="Heading 2" onClick={() => runCommand("formatBlock", "H2")} />
+        <ToolbarButton label="H3" title="Heading 3" onClick={() => runCommand("formatBlock", "H3")} />
+        <ToolbarButton label="• List" title="Bulleted list" onClick={() => runCommand("insertUnorderedList")} />
       </div>
 
       <div className="relative">
@@ -440,6 +459,8 @@ function RichTextEditor({ value, onChange }: RichTextEditorProps) {
   );
 }
 
+// ─── Store helpers ────────────────────────────────────────────────────────────
+
 type LocalStoreState = {
   store: BlogAdminStore;
   source: "local" | "seed";
@@ -456,56 +477,36 @@ function serializeStore(store: BlogAdminStore) {
 
 function loadLocalAdminStore(): LocalStoreState {
   if (typeof window === "undefined") {
-    return {
-      store: getSeedAdminStore(),
-      source: "seed",
-    };
+    return { store: getSeedAdminStore(), source: "seed" };
   }
 
   for (const key of [ADMIN_BLOG_STORAGE_KEY, LEGACY_ADMIN_BLOG_STORAGE_KEY]) {
     try {
       const raw = window.localStorage.getItem(key);
       if (!raw) continue;
-
       const parsed = JSON.parse(raw);
       const hydrated = hydrateAdminStore(parsed);
-
-      if (hydrated) {
-        return {
-          store: hydrated,
-          source: "local",
-        };
-      }
+      if (hydrated) return { store: hydrated, source: "local" };
     } catch {
       continue;
     }
   }
 
-  return {
-    store: getSeedAdminStore(),
-    source: "seed",
-  };
+  return { store: getSeedAdminStore(), source: "seed" };
 }
 
 function saveLocalAdminStore(store: BlogAdminStore) {
   if (typeof window === "undefined") return;
-
   window.localStorage.setItem(ADMIN_BLOG_STORAGE_KEY, JSON.stringify(store));
 }
 
 async function readStoreResponse(response: Response) {
-  const payload = (await response.json()) as
-    | RemoteStoreState
-    | { error?: string };
-
+  const payload = (await response.json()) as RemoteStoreState | { error?: string };
   if (!response.ok) {
     throw new Error(
-      "error" in payload && payload.error
-        ? payload.error
-        : "Unable to sync blog posts.",
+      "error" in payload && payload.error ? payload.error : "Unable to sync blog posts.",
     );
   }
-
   return payload as RemoteStoreState;
 }
 
@@ -514,35 +515,51 @@ async function fetchRemoteAdminStore() {
     cache: "no-store",
     credentials: "same-origin",
   });
-
   return readStoreResponse(response);
 }
 
 async function saveRemoteAdminStore(store: BlogAdminStore) {
   const response = await fetch("/api/admin/posts", {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
     body: JSON.stringify(store),
   });
-
   return readStoreResponse(response);
 }
+
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
+
+let toastCounter = 0;
 
 export default function AdminDashboard() {
   const [initialLocalState] = useState<LocalStoreState>(loadLocalAdminStore);
   const [store, setStore] = useState<BlogAdminStore>(initialLocalState.store);
+  // savedStore tracks the last explicitly saved version for dirty detection
+  const [savedStore, setSavedStore] = useState<BlogAdminStore>(initialLocalState.store);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [isRemoteStoreReady, setIsRemoteStoreReady] = useState(false);
   const [syncErrorMessage, setSyncErrorMessage] = useState<string | null>(null);
-  const [syncStatus, setSyncStatus] = useState<
-    "loading" | "saving" | "saved" | "error"
-  >("loading");
+  const [syncStatus, setSyncStatus] = useState<"loading" | "saving" | "saved" | "error">("loading");
+  const [lastPublishedId, setLastPublishedId] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const deferredSearch = useDeferredValue(search);
   const lastSyncedStoreRef = useRef("");
+
+  const addToast = useCallback((message: string, type: Toast["type"]) => {
+    const id = ++toastCounter;
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   useEffect(() => {
     saveLocalAdminStore(store);
@@ -556,18 +573,16 @@ export default function AdminDashboard() {
         const remoteStore = await fetchRemoteAdminStore();
         if (cancelled) return;
 
-        if (
-          remoteStore.source === "seed" &&
-          initialLocalState.source === "local"
-        ) {
+        if (remoteStore.source === "seed" && initialLocalState.source === "local") {
           const migratedStore = await saveRemoteAdminStore(initialLocalState.store);
           if (cancelled) return;
-
           lastSyncedStoreRef.current = serializeStore(migratedStore.store);
           setStore(migratedStore.store);
+          setSavedStore(migratedStore.store);
         } else {
           lastSyncedStoreRef.current = serializeStore(remoteStore.store);
           setStore(remoteStore.store);
+          setSavedStore(remoteStore.store);
         }
 
         setSyncStatus("saved");
@@ -579,17 +594,12 @@ export default function AdminDashboard() {
         );
         setSyncStatus("error");
       } finally {
-        if (!cancelled) {
-          setIsRemoteStoreReady(true);
-        }
+        if (!cancelled) setIsRemoteStoreReady(true);
       }
     }
 
     void syncInitialStore();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [initialLocalState]);
 
   useEffect(() => {
@@ -602,11 +612,9 @@ export default function AdminDashboard() {
     const timeoutId = window.setTimeout(() => {
       void (async () => {
         setSyncStatus("saving");
-
         try {
           const remoteStore = await saveRemoteAdminStore(store);
           if (cancelled) return;
-
           lastSyncedStoreRef.current = serializeStore(remoteStore.store);
           setStore((current) =>
             serializeStore(current) === serializedStore ? remoteStore.store : current,
@@ -631,19 +639,16 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-
     const onStorage = (event: StorageEvent) => {
       if (
         event.key &&
         event.key !== ADMIN_BLOG_STORAGE_KEY &&
         event.key !== LEGACY_ADMIN_BLOG_STORAGE_KEY
-      ) {
-        return;
-      }
-
-      setStore(loadLocalAdminStore().store);
+      ) return;
+      const loaded = loadLocalAdminStore().store;
+      setStore(loaded);
+      setSavedStore(loaded);
     };
-
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
@@ -651,32 +656,22 @@ export default function AdminDashboard() {
   const sortedPosts = useMemo(
     () =>
       [...store.posts].sort(
-        (firstPost, secondPost) =>
-          new Date(secondPost.updatedAt).getTime() -
-          new Date(firstPost.updatedAt).getTime(),
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
       ),
     [store.posts],
   );
 
   const filteredPosts = useMemo(() => {
     const query = deferredSearch.trim().toLowerCase();
-
     return sortedPosts.filter((post) => {
+      if (statusFilter !== "all" && post.status !== statusFilter) return false;
       if (!query) return true;
-
-      return [
-        post.title,
-        post.category,
-        post.slug,
-        post.seoTitle,
-        post.seoDescription,
-        ...post.keywords,
-      ]
+      return [post.title, post.category, post.slug, post.seoTitle, post.seoDescription, ...post.keywords]
         .join(" ")
         .toLowerCase()
         .includes(query);
     });
-  }, [deferredSearch, sortedPosts]);
+  }, [deferredSearch, sortedPosts, statusFilter]);
 
   const activeSelectedId =
     selectedId && store.posts.some((post) => post.id === selectedId)
@@ -686,19 +681,22 @@ export default function AdminDashboard() {
   const selectedPost =
     sortedPosts.find((post) => post.id === activeSelectedId) ?? null;
 
+  // Dirty detection: compare current selected post to its saved counterpart
+  const isDirty = useMemo(() => {
+    if (!selectedPost) return false;
+    const savedPost = savedStore.posts.find((p) => p.id === selectedPost.id);
+    if (!savedPost) return true; // new unsaved post
+    return JSON.stringify(selectedPost) !== JSON.stringify(savedPost);
+  }, [selectedPost, savedStore]);
+
   const categoryOptions = useMemo(
     () =>
-      Array.from(
-        new Set([...DEFAULT_CATEGORIES, ...store.posts.map((post) => post.category)]),
-      ),
+      Array.from(new Set([...DEFAULT_CATEGORIES, ...store.posts.map((post) => post.category)])),
     [store.posts],
   );
 
-  function replaceSelectedPost(
-    updater: (post: ManagedBlogPost) => ManagedBlogPost,
-  ) {
+  function replaceSelectedPost(updater: (post: ManagedBlogPost) => ManagedBlogPost) {
     if (!activeSelectedId) return;
-
     setStore((current) => ({
       ...current,
       posts: current.posts.map((post) =>
@@ -709,7 +707,6 @@ export default function AdminDashboard() {
 
   function updateTitle(value: string) {
     if (!selectedPost) return;
-
     const currentGeneratedSlug = slugify(selectedPost.title);
     const nextGeneratedSlug = slugify(value) || selectedPost.slug;
 
@@ -718,7 +715,6 @@ export default function AdminDashboard() {
         !post.slug || post.slug === currentGeneratedSlug
           ? nextGeneratedSlug
           : post.slug;
-
       return {
         ...post,
         title: value,
@@ -729,25 +725,13 @@ export default function AdminDashboard() {
     });
   }
 
-  function updateSimpleField<K extends keyof ManagedBlogPost>(
-    key: K,
-    value: ManagedBlogPost[K],
-  ) {
+  function updateSimpleField<K extends keyof ManagedBlogPost>(key: K, value: ManagedBlogPost[K]) {
     replaceSelectedPost((post) => {
-      const nextPost = {
-        ...post,
-        [key]: value,
-      };
-
+      const nextPost = { ...post, [key]: value };
       if (key === "slug") {
         const nextSlug = slugify(String(value)) || post.slug;
-        return {
-          ...nextPost,
-          slug: nextSlug,
-          sections: bodyHtmlToSections(post.bodyHtml, nextSlug),
-        };
+        return { ...nextPost, slug: nextSlug, sections: bodyHtmlToSections(post.bodyHtml, nextSlug) };
       }
-
       return nextPost;
     });
   }
@@ -760,16 +744,10 @@ export default function AdminDashboard() {
     }));
   }
 
-  function updateFaq(
-    faqId: string,
-    field: keyof ManagedBlogFaq,
-    value: string,
-  ) {
+  function updateFaq(faqId: string, field: keyof ManagedBlogFaq, value: string) {
     replaceSelectedPost((post) => ({
       ...post,
-      faq: post.faq.map((faq) =>
-        faq.id === faqId ? { ...faq, [field]: value } : faq,
-      ),
+      faq: post.faq.map((faq) => (faq.id === faqId ? { ...faq, [field]: value } : faq)),
     }));
   }
 
@@ -795,51 +773,89 @@ export default function AdminDashboard() {
   }
 
   function createPost() {
-    const newPost = createEmptyManagedPost();
+    const today = new Date().toISOString().slice(0, 10);
+    const newPost: ManagedBlogPost = {
+      ...createEmptyManagedPost(),
+      title: "",
+      slug: "",
+      status: "draft",
+      publishedAt: today,
+      updatedAt: today,
+      bodyHtml: "",
+      sections: [],
+    };
 
-    setStore((current) => ({
-      ...current,
-      posts: [newPost, ...current.posts],
-    }));
-
+    setStore((current) => ({ ...current, posts: [newPost, ...current.posts] }));
     setSearch("");
+    setStatusFilter("all");
     startTransition(() => setSelectedId(newPost.id));
   }
 
   function saveDraft() {
+    if (!selectedPost) return;
     const today = new Date().toISOString().slice(0, 10);
 
-    replaceSelectedPost((post) => ({
-      ...post,
-      status: "draft",
+    const updated = {
+      ...selectedPost,
+      status: "draft" as BlogStatus,
       updatedAt: today,
-      sections: bodyHtmlToSections(post.bodyHtml, post.slug),
+      sections: bodyHtmlToSections(selectedPost.bodyHtml, selectedPost.slug),
+    };
+
+    setStore((current) => ({
+      ...current,
+      posts: current.posts.map((p) => (p.id === updated.id ? updated : p)),
     }));
+    setSavedStore((current) => ({
+      ...current,
+      posts: current.posts.some((p) => p.id === updated.id)
+        ? current.posts.map((p) => (p.id === updated.id ? updated : p))
+        : [updated, ...current.posts],
+    }));
+    setLastPublishedId(null);
+    addToast("Draft saved.", "success");
   }
 
   function publishPost() {
+    if (!selectedPost) return;
     const today = new Date().toISOString().slice(0, 10);
 
-    replaceSelectedPost((post) => ({
-      ...post,
-      status: "published",
-      publishedAt: post.publishedAt || today,
+    const updated = {
+      ...selectedPost,
+      status: "published" as BlogStatus,
+      publishedAt: selectedPost.publishedAt || today,
       updatedAt: today,
-      sections: bodyHtmlToSections(post.bodyHtml, post.slug),
-    }));
-  }
-
-  function deletePost(postId: string) {
-    const post = store.posts.find((item) => item.id === postId);
-    if (!post) return;
-
-    if (!window.confirm(`Delete "${post.title}"?`)) {
-      return;
-    }
-
-    const remainingPosts = store.posts.filter((item) => item.id !== postId);
+      sections: bodyHtmlToSections(selectedPost.bodyHtml, selectedPost.slug),
+    };
 
     setStore((current) => ({
+      ...current,
+      posts: current.posts.map((p) => (p.id === updated.id ? updated : p)),
+    }));
+    setSavedStore((current) => ({
+      ...current,
+      posts: current.posts.some((p) => p.id === updated.id)
+        ? current.posts.map((p) => (p.id === updated.id ? updated : p))
+        : [updated, ...current.posts],
+    }));
+    setLastPublishedId(updated.id);
+    addToast("Post published successfully.", "success");
+  }
+
+  function requestDeletePost(postId: string) {
+    const post = store.posts.find((item) => item.id === postId);
+    if (!post) return;
+    setDeleteTarget({ id: postId, title: post.title });
+  }
+
+  function confirmDeletePost() {
+    if (!deleteTarget) return;
+    const { id: postId } = deleteTarget;
+    setDeleteTarget(null);
+
+    const remainingPosts = store.posts.filter((item) => item.id !== postId);
+    setStore((current) => ({ ...current, posts: remainingPosts }));
+    setSavedStore((current) => ({
       ...current,
       posts: current.posts.filter((item) => item.id !== postId),
     }));
@@ -847,7 +863,12 @@ export default function AdminDashboard() {
     if (activeSelectedId === postId) {
       startTransition(() => setSelectedId(remainingPosts[0]?.id ?? null));
     }
+
+    addToast("Post deleted.", "success");
   }
+
+  const showSyncedMessage =
+    selectedPost !== null && lastPublishedId === selectedPost.id && syncStatus === "saved";
 
   const syncMessage =
     syncStatus === "loading"
@@ -856,21 +877,47 @@ export default function AdminDashboard() {
         ? "Syncing changes to the live site..."
         : syncStatus === "error"
           ? syncErrorMessage ?? "Sync failed. Refresh and sign in again if needed."
-          : "Changes synced to the live site.";
+          : showSyncedMessage
+            ? "Changes synced to the live site."
+            : null;
+
+  const statusFilterCounts = useMemo(() => {
+    const query = deferredSearch.trim().toLowerCase();
+    const byQuery = query
+      ? sortedPosts.filter((p) =>
+          [p.title, p.category, p.slug, p.seoTitle, p.seoDescription, ...p.keywords]
+            .join(" ")
+            .toLowerCase()
+            .includes(query)
+        )
+      : sortedPosts;
+    return {
+      all: byQuery.length,
+      published: byQuery.filter((p) => p.status === "published").length,
+      draft: byQuery.filter((p) => p.status === "draft").length,
+    };
+  }, [deferredSearch, sortedPosts]);
 
   return (
     <div className="min-h-screen bg-white text-gray-800">
+      {/* Toasts */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <DeleteConfirmModal
+          postTitle={deleteTarget.title}
+          onConfirm={confirmDeletePost}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
       <header className="sticky top-0 z-40 border-b border-gray-200 bg-white">
         <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">
             Blog Manager
           </h1>
-
-          <button
-            type="button"
-            onClick={createPost}
-            className={PRIMARY_BUTTON_CLASS}
-          >
+          <button type="button" onClick={createPost} className={PRIMARY_BUTTON_CLASS}>
             New Post
           </button>
         </div>
@@ -879,6 +926,7 @@ export default function AdminDashboard() {
       <main className="mx-auto grid max-w-[1600px] gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[21rem_minmax(0,1fr)] lg:px-8 xl:grid-cols-[24rem_minmax(0,1fr)]">
         <aside className="lg:sticky lg:top-24 lg:h-[calc(100vh-7rem)]">
           <div className={`flex h-full flex-col overflow-hidden ${PANEL_CLASS}`}>
+            {/* Search */}
             <div className="border-b border-gray-200 p-4 sm:p-5">
               <div className="relative">
                 <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -891,11 +939,29 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-gray-500 sm:px-5">
-              <span>All Posts</span>
-              <span>{filteredPosts.length}</span>
+            {/* Status filter tabs */}
+            <div className="flex border-b border-gray-200">
+              {(["all", "published", "draft"] as StatusFilter[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setStatusFilter(f)}
+                  className={[
+                    "flex-1 px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.18em] transition-colors",
+                    statusFilter === f
+                      ? "border-b-2 border-emerald-600 text-emerald-700"
+                      : "text-gray-500 hover:text-gray-800",
+                  ].join(" ")}
+                >
+                  {f === "all" ? "All" : f === "published" ? "Published" : "Draft"}
+                  <span className="ml-1.5 text-[10px] text-gray-400">
+                    ({statusFilterCounts[f]})
+                  </span>
+                </button>
+              ))}
             </div>
 
+            {/* Post list */}
             <div className="flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
               {filteredPosts.map((post) => (
                 <PostCard
@@ -903,7 +969,7 @@ export default function AdminDashboard() {
                   post={post}
                   isActive={selectedPost?.id === post.id}
                   onSelect={() => setSelectedId(post.id)}
-                  onDelete={() => deletePost(post.id)}
+                  onDelete={() => requestDeletePost(post.id)}
                 />
               ))}
 
@@ -919,33 +985,42 @@ export default function AdminDashboard() {
         <section className="min-w-0">
           {selectedPost ? (
             <div className="space-y-6">
+              {/* Sticky header bar */}
               <div className={`sticky top-20 z-30 p-4 sm:p-5 ${PANEL_CLASS}`}>
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-3">
                       <h2 className="truncate text-xl font-semibold text-gray-800 md:text-2xl">
-                        {selectedPost.title}
+                        {selectedPost.title || "Untitled"}
                       </h2>
                       <StatusBadge status={selectedPost.status} />
+                      {isDirty && (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                          Unsaved changes
+                        </span>
+                      )}
                     </div>
                     <p className="mt-2 text-sm text-gray-500">
                       Last updated {formatDateLabel(selectedPost.updatedAt)}
                     </p>
-                    <p
-                      className={[
-                        "mt-1 text-sm",
-                        syncStatus === "error" ? "text-red-600" : "text-gray-500",
-                      ].join(" ")}
-                    >
-                      {syncMessage}
-                    </p>
+                    {syncMessage && (
+                      <p
+                        className={[
+                          "mt-1 text-sm",
+                          syncStatus === "error" ? "text-red-600" : "text-gray-500",
+                        ].join(" ")}
+                      >
+                        {syncMessage}
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap gap-3">
                     <button
                       type="button"
                       onClick={saveDraft}
-                      className={PRIMARY_BUTTON_CLASS}
+                      className={SECONDARY_BUTTON_CLASS}
                     >
                       Save Draft
                     </button>
@@ -960,6 +1035,7 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
+              {/* Editor body */}
               <div className={`space-y-6 p-5 sm:p-6 lg:p-8 ${PANEL_CLASS}`}>
                 <div className={`grid gap-6 p-5 lg:p-6 ${SECTION_CLASS}`}>
                   <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
@@ -979,9 +1055,7 @@ export default function AdminDashboard() {
                           <span className={LABEL_CLASS}>Category</span>
                           <select
                             value={selectedPost.category}
-                            onChange={(event) =>
-                              updateSimpleField("category", event.target.value)
-                            }
+                            onChange={(event) => updateSimpleField("category", event.target.value)}
                             className={INPUT_CLASS}
                           >
                             {categoryOptions.map((category) => (
@@ -1018,9 +1092,7 @@ export default function AdminDashboard() {
                           <input
                             type="date"
                             value={selectedPost.publishedAt}
-                            onChange={(event) =>
-                              updateSimpleField("publishedAt", event.target.value)
-                            }
+                            onChange={(event) => updateSimpleField("publishedAt", event.target.value)}
                             className={INPUT_CLASS}
                           />
                         </label>
@@ -1032,15 +1104,11 @@ export default function AdminDashboard() {
                       <dl className="mt-4 space-y-4 text-sm">
                         <div className="flex items-center justify-between gap-4">
                           <dt className="text-gray-500">Status</dt>
-                          <dd>
-                            <StatusBadge status={selectedPost.status} />
-                          </dd>
+                          <dd><StatusBadge status={selectedPost.status} /></dd>
                         </div>
                         <div className="flex items-center justify-between gap-4">
                           <dt className="text-gray-500">Category</dt>
-                          <dd className="text-right font-medium text-gray-800">
-                            {selectedPost.category}
-                          </dd>
+                          <dd className="text-right font-medium text-gray-800">{selectedPost.category}</dd>
                         </div>
                         <div className="flex items-center justify-between gap-4">
                           <dt className="text-gray-500">Published</dt>
@@ -1051,7 +1119,7 @@ export default function AdminDashboard() {
                         <div className="flex items-center justify-between gap-4">
                           <dt className="text-gray-500">Slug</dt>
                           <dd className="max-w-[12rem] truncate text-right font-medium text-gray-800">
-                            /blog/{selectedPost.slug}
+                            /blog/{selectedPost.slug || "—"}
                           </dd>
                         </div>
                       </dl>
@@ -1059,6 +1127,7 @@ export default function AdminDashboard() {
                   </div>
                 </div>
 
+                {/* Body editor */}
                 <div className={`p-5 sm:p-6 lg:p-6 ${SECTION_CLASS}`}>
                   <div className="mb-5">
                     <p className={LABEL_CLASS}>Body</p>
@@ -1066,7 +1135,6 @@ export default function AdminDashboard() {
                       Rich text editor
                     </h3>
                   </div>
-
                   <RichTextEditor
                     key={selectedPost.id}
                     value={selectedPost.bodyHtml}
@@ -1074,6 +1142,7 @@ export default function AdminDashboard() {
                   />
                 </div>
 
+                {/* SEO */}
                 <details className={`group ${SECTION_CLASS}`}>
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-5 sm:px-6 lg:px-6 [&::-webkit-details-marker]:hidden">
                     <div>
@@ -1090,9 +1159,7 @@ export default function AdminDashboard() {
                       <span className={LABEL_CLASS}>Meta Title</span>
                       <input
                         value={selectedPost.seoTitle}
-                        onChange={(event) =>
-                          updateSimpleField("seoTitle", event.target.value)
-                        }
+                        onChange={(event) => updateSimpleField("seoTitle", event.target.value)}
                         className={INPUT_CLASS}
                       />
                     </label>
@@ -1112,9 +1179,7 @@ export default function AdminDashboard() {
                       <span className={LABEL_CLASS}>Meta Description</span>
                       <textarea
                         value={selectedPost.seoDescription}
-                        onChange={(event) =>
-                          updateSimpleField("seoDescription", event.target.value)
-                        }
+                        onChange={(event) => updateSimpleField("seoDescription", event.target.value)}
                         rows={4}
                         className={INPUT_CLASS}
                       />
@@ -1135,6 +1200,7 @@ export default function AdminDashboard() {
                   </div>
                 </details>
 
+                {/* FAQs */}
                 <div className={`p-5 sm:p-6 lg:p-6 ${SECTION_CLASS}`}>
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
@@ -1143,53 +1209,35 @@ export default function AdminDashboard() {
                         Question and answer pairs
                       </h3>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={addFaq}
-                      className={SECONDARY_BUTTON_CLASS}
-                    >
+                    <button type="button" onClick={addFaq} className={SECONDARY_BUTTON_CLASS}>
                       Add FAQ
                     </button>
                   </div>
 
                   <div className="mt-6 space-y-4">
                     {selectedPost.faq.map((faq) => (
-                      <div
-                        key={faq.id}
-                        className="rounded-xl border border-gray-200 bg-white p-4 sm:p-5"
-                      >
+                      <div key={faq.id} className="rounded-xl border border-gray-200 bg-white p-4 sm:p-5">
                         <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
                           <div className="grid flex-1 gap-4">
                             <label className="block space-y-2">
                               <span className={LABEL_CLASS}>Question</span>
                               <input
                                 value={faq.question}
-                                onChange={(event) =>
-                                  updateFaq(faq.id, "question", event.target.value)
-                                }
+                                onChange={(event) => updateFaq(faq.id, "question", event.target.value)}
                                 className={INPUT_CLASS}
                               />
                             </label>
-
                             <label className="block space-y-2">
                               <span className={LABEL_CLASS}>Answer</span>
                               <textarea
                                 value={faq.answer}
-                                onChange={(event) =>
-                                  updateFaq(faq.id, "answer", event.target.value)
-                                }
+                                onChange={(event) => updateFaq(faq.id, "answer", event.target.value)}
                                 rows={4}
                                 className={INPUT_CLASS}
                               />
                             </label>
                           </div>
-
-                          <button
-                            type="button"
-                            onClick={() => removeFaq(faq.id)}
-                            className={DANGER_BUTTON_CLASS}
-                          >
+                          <button type="button" onClick={() => removeFaq(faq.id)} className={DANGER_BUTTON_CLASS}>
                             Remove
                           </button>
                         </div>
@@ -1202,12 +1250,9 @@ export default function AdminDashboard() {
           ) : (
             <div className={`flex min-h-[60vh] items-center justify-center p-8 text-center ${PANEL_CLASS}`}>
               <div className="max-w-md">
-                <h2 className="text-2xl font-semibold tracking-tight">
-                  No post selected
-                </h2>
+                <h2 className="text-2xl font-semibold tracking-tight">No post selected</h2>
                 <p className="mt-3 text-sm leading-7 text-gray-500">
-                  Create a new post to start writing, or choose an existing post
-                  from the sidebar.
+                  Create a new post to start writing, or choose an existing post from the sidebar.
                 </p>
               </div>
             </div>
