@@ -10,42 +10,24 @@ import {
 } from "../admin-blog";
 import type { BlogPost } from "../blog";
 
-const DEFAULT_BLOG_STORE_FILE = path.join(
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const BLOB_PATHNAME = "admin-blog-store.json";
+
+const LOCAL_STORE_FILE = path.join(
   process.cwd(),
   "data",
   "admin-blog-store.json",
 );
-const TEMP_BLOG_STORE_FILE = path.join(
+
+const TEMP_STORE_FILE = path.join(
   "/tmp",
   "accountsassists-admin-blog-store.json",
 );
 
 export type AdminBlogStoreSource = "file" | "seed";
 
-function uniquePaths(paths: string[]) {
-  return Array.from(new Set(paths.filter(Boolean)));
-}
-
-function getBlogStoreFiles() {
-  return uniquePaths([
-    process.env.BLOG_STORE_FILE_PATH?.trim() ?? "",
-    DEFAULT_BLOG_STORE_FILE,
-    TEMP_BLOG_STORE_FILE,
-  ]);
-}
-
-function getPersistenceErrorMessage(error: unknown) {
-  const code =
-    error && typeof error === "object" && "code" in error
-      ? String(error.code)
-      : "";
-
-  if (code === "EROFS" || code === "EPERM" || code === "EACCES") {
-    return "This host cannot write blog changes to the current storage path.";
-  }
-
-  return "Unable to save blog posts to disk.";
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function toTimestamp(value: string) {
   const timestamp = new Date(value).getTime();
@@ -53,15 +35,10 @@ function toTimestamp(value: string) {
 }
 
 function sortPosts(posts: ManagedBlogPost[]) {
-  return [...posts].sort((firstPost, secondPost) => {
-    const publishedDifference =
-      toTimestamp(secondPost.publishedAt) - toTimestamp(firstPost.publishedAt);
-
-    if (publishedDifference !== 0) {
-      return publishedDifference;
-    }
-
-    return toTimestamp(secondPost.updatedAt) - toTimestamp(firstPost.updatedAt);
+  return [...posts].sort((a, b) => {
+    const diff = toTimestamp(b.publishedAt) - toTimestamp(a.publishedAt);
+    if (diff !== 0) return diff;
+    return toTimestamp(b.updatedAt) - toTimestamp(a.updatedAt);
   });
 }
 
@@ -69,62 +46,146 @@ function toPublicPost(post: ManagedBlogPost): BlogPost {
   return post;
 }
 
-async function readPersistedStore() {
-  for (const file of getBlogStoreFiles()) {
+function hasBlobToken() {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
+}
+
+// ─── Vercel Blob layer ────────────────────────────────────────────────────────
+
+async function readBlobStore(): Promise<BlogAdminStore | null> {
+  const { put, head, BlobNotFoundError } = await import("@vercel/blob");
+
+  // head() returns blob metadata if the file exists, throws BlobNotFoundError otherwise
+  let blobUrl: string;
+  try {
+    const meta = await head(BLOB_PATHNAME, {
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+    });
+    blobUrl = meta.url;
+  } catch (err) {
+    if (err instanceof BlobNotFoundError) return null;
+    throw err;
+  }
+
+  // Fetch the actual JSON content via the blob's public URL
+  const response = await fetch(blobUrl, { cache: "no-store" });
+  if (!response.ok) return null;
+
+  const raw = await response.text();
+  try {
+    return hydrateAdminStore(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
+async function writeBlobStore(store: BlogAdminStore): Promise<void> {
+  const { put } = await import("@vercel/blob");
+
+  await put(BLOB_PATHNAME, JSON.stringify(store, null, 2), {
+    access: "public",
+    contentType: "application/json",
+    addRandomSuffix: false,
+    token: process.env.BLOB_READ_WRITE_TOKEN,
+  });
+}
+
+// ─── Local filesystem layer (dev fallback) ────────────────────────────────────
+
+async function readLocalStore(): Promise<BlogAdminStore | null> {
+  for (const file of [LOCAL_STORE_FILE, TEMP_STORE_FILE]) {
     try {
       const raw = await readFile(file, "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      const store = hydrateAdminStore(parsed);
-
-      if (store) {
-        return store;
-      }
+      const store = hydrateAdminStore(JSON.parse(raw));
+      if (store) return store;
     } catch {
       continue;
     }
   }
-
   return null;
 }
+
+async function writeLocalStore(store: BlogAdminStore): Promise<void> {
+  let lastError: unknown = null;
+
+  for (const file of [LOCAL_STORE_FILE, TEMP_STORE_FILE]) {
+    try {
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  const code =
+    lastError && typeof lastError === "object" && "code" in lastError
+      ? String((lastError as { code: unknown }).code)
+      : "";
+
+  if (code === "EROFS" || code === "EPERM" || code === "EACCES") {
+    throw new Error(
+      "This host cannot write blog changes to disk. Set BLOB_READ_WRITE_TOKEN to enable Vercel Blob storage.",
+    );
+  }
+
+  throw new Error("Unable to save blog posts to disk.");
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function getAdminBlogStore(): Promise<{
   store: BlogAdminStore;
   source: AdminBlogStoreSource;
 }> {
-  const persistedStore = await readPersistedStore();
+  let store: BlogAdminStore | null = null;
 
-  if (persistedStore) {
-    return {
-      store: persistedStore,
-      source: "file",
-    };
-  }
-
-  return {
-    store: getSeedAdminStore(),
-    source: "seed",
-  };
-}
-
-export async function saveAdminBlogStore(store: BlogAdminStore) {
-  let lastError: unknown = null;
-
-  for (const file of getBlogStoreFiles()) {
+  if (hasBlobToken()) {
     try {
-      await mkdir(path.dirname(file), { recursive: true });
-      await writeFile(file, `${JSON.stringify(store, null, 2)}\n`, "utf8");
-      return store;
-    } catch (error) {
-      lastError = error;
+      store = await readBlobStore();
+    } catch (err) {
+      console.error("[blog-store] Blob read failed:", err);
     }
   }
 
-  throw new Error(getPersistenceErrorMessage(lastError));
+  // Fallback to local filesystem (works in dev without a token)
+  if (!store) {
+    store = await readLocalStore();
+  }
+
+  if (store) {
+    return { store, source: "file" };
+  }
+
+  return { store: getSeedAdminStore(), source: "seed" };
 }
+
+export async function saveAdminBlogStore(store: BlogAdminStore): Promise<BlogAdminStore> {
+  if (hasBlobToken()) {
+    try {
+      await writeBlobStore(store);
+      console.log("[blog-store] Saved to Vercel Blob.");
+      return store;
+    } catch (err) {
+      console.error("[blog-store] Blob write failed:", err);
+      throw new Error(
+        err instanceof Error
+          ? `Blob storage error: ${err.message}`
+          : "Unable to save blog posts to Vercel Blob.",
+      );
+    }
+  }
+
+  // Local dev: write to filesystem
+  await writeLocalStore(store);
+  console.log("[blog-store] Saved to local filesystem.");
+  return store;
+}
+
+// ─── Public blog queries ──────────────────────────────────────────────────────
 
 export async function getPublishedBlogPosts() {
   const { store } = await getAdminBlogStore();
-
   return sortPosts(
     store.posts.filter((post) => post.status === "published"),
   ).map(toPublicPost);
