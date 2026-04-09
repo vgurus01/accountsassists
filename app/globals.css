@@ -44,6 +44,34 @@ body {
     "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
 }
 
+.promo-marquee {
+  overflow: hidden;
+}
+
+.promo-marquee-track {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+  animation: promo-scroll 40s linear infinite;
+  animation-delay: -20s;
+}
+
+@keyframes promo-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .promo-marquee-track {
+    animation: none;
+    transform: translateX(0);
+  }
+}
+
 h1,
 h2,
 h3 {
